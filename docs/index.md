@@ -91,9 +91,8 @@ OSS 默认「新建 Bucket + 自动创建仅限该 Bucket 权限的 AK」，无�
 
 ⚠️ **NAS 文件系统数量有账号级配额（默认 20）**，实测遇到过 `exceeds the quota: creation(1) + usage(20) > quota(20)` 而直接建栈失败。部署前建议看一眼 NAS 控制台，清理残留的空 `cnfs-nas` 文件系统或提配额。
 
-> 早期版本曾提供 CPFS 通用版 / CPFS 智算版 / 不使用共享存储 三个选项，现已移除：CPFS 通用版每地域只开服少数可用区且通常与 GPU 可用区不重叠，CPFS 智算版处于邀测无法编排创建，实际都不可用。
 
-## 四、部署后操作（4 步）
+## 四、部署后操作（3 步）
 
 资源栈的**输出**里已给出每一步可直接复制的命令。先获取 kubeconfig：
 
@@ -124,45 +123,20 @@ kubectl exec -it deploy/vla-ops -n robot-demo -- bash /materials/prepare-data.sh
 aliyun oss cp -r ./videos/ oss://<Bucket>/dataset/ --endpoint oss-<region>.aliyuncs.com
 ```
 
-### 第 1.5 步：看 eRDMA 体检报告（合并后新增）
+### 第 2 步：看 eRDMA 体检与 GPU 资源
 
-服务在每台 GPU 节点上都跑了一个体检 DaemonSet。**实例状态变成 Deployed 时报告一定已完整**（容器配了 readinessProbe 盯 sentinel 文件，不会让你看到半成品）：
+服务在每台 GPU 节点上跑了体检 DaemonSet。**实例 Deployed 时报告一定已完整**（readinessProbe 盯 sentinel 文件，不会看到半成品）：
 
 ```bash
 kubectl logs -n erdma-check -l app=erdma-env-check --tail=-1 --prefix
-```
-
-报告分三段：**A. 判定项**（10 项逐项 PASS/FAIL，末尾一行 `SUMMARY ... PASS=.. FAIL=.. SKIP=..`）、**B. 官方一键体检** `env_check.py -s egs_l20n`、**C. 原始信息**（ibv_devinfo / 拥塞控制 / GID / ACSCtl / 驱动版本）。
-
-| # | 判定项 | 真 L20N 上的预期 |
-|---|---|---|
-| 1 | eRDMA 内核模块已加载 | PASS |
-| 2 | 两张 eRDMA 设备存在 | PASS |
-| 3 | 两张网卡均 PORT_ACTIVE | PASS |
-| 4 | MTU 4096（巨型帧） | PASS |
-| 5 | NUMA 分别绑定 0 与 1 | PASS（都为 0 说明辅助网卡挂载错） |
-| 6 | PCIe ACS 已关闭（SrcValid-） | PASS |
-| 7 | disable_pcie_acs 开机自启 | PASS |
-| 8 | eadm 可用（驱动已升级到 1.5.9） | PASS |
-| 9 | GPU 已被识别 | PASS |
-| 10 | NVIDIA 驱动版本 == 固定的 580.126.09 | PASS |
-
-> 注：项 2～5 依赖 L20N 出厂自带的两张 eRDMA 网卡。用非 L20N 规格（如 A10）部署时这 4 项必然 FAIL，属预期，不代表模板有问题。
-
-还要确认节点上报了 eRDMA 资源：
-
-```bash
 kubectl get nodes -l robot-solution.aliyun.com/node-role=gpu -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.allocatable}{"\n"}{end}'
 ```
 
-真 L20N 上应同时出现 `"nvidia.com/gpu":"8"` 与 `"aliyun/erdma":"400"`。没有 `aliyun/erdma` 说明 eRDMA 组件未生效。
+体检报告 A 段是 10 项 PASS/FAIL 判定 + 一行 `SUMMARY PASS=.. FAIL=.. SKIP=..`（B 段官方 `env_check.py`、C 段原始信息供排查）。真 L20N 上应 **10 项全 PASS**，且节点同时上报 `"nvidia.com/gpu":"8"` 与 `"aliyun/erdma":"400"`。
 
-### 第 2 步：确认 GPU 节点已就位
-
-上一步的命令已经把节点资源打印出来了，这里只说两种异常：
-
-- **没有任何输出** → GPU 节点数为 0（未申请到 L20N 配额时的正常状态）。到 ACK 节点池把数量改成 1 即可，体检 DaemonSet 会自动铺到新节点上。
-- **有节点但没有 `nvidia.com/gpu`** → 节点刚 Ready、GPU 驱动仍在安装，等几分钟再看。
+- 体检项 **2～5**（两张网卡 / PORT_ACTIVE / MTU 4096 / NUMA）依赖 L20N 出厂自带的 eRDMA 网卡，**用非 L20N 规格（如 A10）时必然 FAIL，属预期**。
+- 节点命令**无输出** = GPU 数为 0（无配额时的正常态），配额到位后节点池改回 1 即可。
+- 没有 `aliyun/erdma` = eRDMA 组件未生效；节点有但无 `nvidia.com/gpu` = 驱动还在装，等几分钟。
 
 ### 第 3 步：创建脚本 ConfigMap
 
@@ -174,11 +148,9 @@ kubectl -n robot-demo create cm vla-pipeline-script \
   --from-file=demo/vla_cpu_postprocess.py
 ```
 
-### 第 4 步：提交 Demo
-
-Demo 清单已随部署下发到 ConfigMap `demo-manifests`，见下一节。
-
 ## 五、运行 Demo
+
+Demo 清单已随部署下发到 ConfigMap `demo-manifests`，直接提交即可。
 
 ### Demo A：GPU 环境自检（约 1 分钟）
 
@@ -223,9 +195,7 @@ lerobot_dataset_smoothed/
 | `VLA_GPU_ACTORS` | 集群 GPU 卡数 | GPU Actor 并行度 |
 | `VLA_SLIM_OUTPUT` | 0 | 置 1 时落盘前裁掉 depth 等大字段，规模化时可把落盘量降低一个数量级 |
 
-## 六、排查清单
-
-### 运行阶段
+## 六、排查清单（运行阶段）
 
 | 现象 | 原因 | 处理 |
 |------|------|------|
@@ -238,4 +208,3 @@ lerobot_dataset_smoothed/
 | HaWoR 阶段超时或 `ConnectionError` | 模型权重未备齐 | 按[第 1 步](#第-1-步在运维控制台备料一条命令)在运维控制台跑一次 `prepare-data.sh` |
 | Pod 卡 ContainerCreating，事件报 OSS 挂载失败 | AccessKey 无权限，或 Bucket 前缀不存在 | 检查 `oss-secret` 与 RAM 权限；`dataset/`、`models/` 前缀由服务预建，勿删 |
 | GPU Pod 一直 Pending | GPU 节点被污点隔离，负载缺 toleration | 内置清单已带 `nvidia.com/gpu` toleration；自定义负载需补上 |
-
