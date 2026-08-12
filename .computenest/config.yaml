@@ -1,0 +1,75 @@
+Service:
+  RegionId: cn-hangzhou
+  DeployType: ros
+  DeployMetadata:
+    ServiceInstanceNameRule:
+      Prefix: RobotSolution-
+      UseDefaultValue: true
+    NetworkMetadata:
+      EnablePrivateVpcConnection: false
+      EnableReversePrivateVpcConnection: false
+    SupplierDeployMetadata:
+      DeployTimeout: 10800
+      # Helm Chart 走计算巢自带的 OCI chart registry（部署物），
+      # 占位符会被替换成 oci://compute-nest-chart-registry.<region>.cr.aliyuncs.com/computenest/<repo>:<tag>。
+      # 不用 GitHub 直链：国内集群实测拉取 30 分钟超时。
+      HelmChartArtifactRelation:
+        '{{ computenest::helmchart::fluid }}':
+          ArtifactId: ${Artifact.Artifact_1.ArtifactId}
+          ArtifactVersion: ${Artifact.Artifact_1.ArtifactVersion}
+        '{{ computenest::helmchart::argo-workflows }}':
+          ArtifactId: ${Artifact.Artifact_2.ArtifactId}
+          ArtifactVersion: ${Artifact.Artifact_2.ArtifactVersion}
+    TemplateConfigs:
+    - Name: 机器人数据处理方案（ACK + GPU）
+      Url: ros_templates/template.yaml
+      AllowedRegions:
+      - cn-hangzhou
+      - cn-beijing
+      - cn-shanghai
+      PredefinedParameters: []
+  OperationMetadata:
+    SupportBackup: false
+    PrometheusConfigMap:
+      机器人数据处理方案（ACK + GPU）:
+        EnablePrometheus: false
+  ServiceType: private
+  ShareType: Public
+  ApprovalType: Manual
+  ServiceInfo:
+  - Locale: zh-CN
+    Name: 机器人数据处理方案（VLA 数据流水线）
+    ShortDescription: 一键交付面向具身智能的 VLA 数据生产环境：ACK 托管 Pro 集群 + GPU 算力节点池 + OSS/NAS
+      分层存储 + Fluid 数据加速，内置 Argo Workflows 与 KubeRay 编排的两阶段数据流水线（第一人称视频 → LeRobot
+      v2.0 数据集）。
+    Image: 
+      https://service-info-public.oss-cn-hangzhou.aliyuncs.com/1853370294850618/cn-hangzhou/service_logo0eea7e248cc54deaa5a6.png
+    Softwares: []
+Artifact:
+  Artifact_1:
+    ArtifactType: HelmChart
+    ArtifactName: robot-solution-ack-fluid-helm-chart
+    ArtifactProperty:
+      RepoName: ${HelmChartBuilder.HelmChart_1.RepoName}
+      Tag: ${HelmChartBuilder.HelmChart_1.Tag}
+      RepoType: Public
+  Artifact_2:
+    ArtifactType: HelmChart
+    ArtifactName: robot-solution-argo-workflows-helm-chart
+    ArtifactProperty:
+      RepoName: ${HelmChartBuilder.HelmChart_2.RepoName}
+      Tag: ${HelmChartBuilder.HelmChart_2.Tag}
+      RepoType: Public
+HelmChartBuilder:
+  HelmChart_1:
+    # 用 ACK 发行的 ack-fluid，不用社区版 fluid：社区版 >=1.0.0 的 chart 用了 Helm lookup 函数，
+    # ack-helm-manager 渲染不了（parse error: function "lookup" not defined）；社区版 0.9.x 的镜像
+    # 在 docker.io，集群内拉不到。ack-fluid 1.0.4 不含 lookup，镜像走 acs/* + region 内网前缀。
+    # 旧的 fluid-1.0.8.tgz 仍留在目录里备查，未被引用。
+    HelmChartPath: 'resources/artifact_resources/helm_chart/ack-fluid-1.0.4.tgz'
+    RepoName: ack-fluid
+    Tag: 1.0.4
+  HelmChart_2:
+    HelmChartPath: 'resources/artifact_resources/helm_chart/argo-workflows-1.0.23.tgz'
+    RepoName: argo-workflows
+    Tag: 1.0.23

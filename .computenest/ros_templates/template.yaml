@@ -1,0 +1,2212 @@
+ROSTemplateFormatVersion: '2015-09-01'
+Description:
+  en: 'Robot (VLA) data processing solution: ACK managed Pro cluster, GPU node pool, OSS/CPFS storage, Fluid data acceleration, Argo Workflows and KubeRay.'
+  zh-cn: '机器人（VLA）数据处理解决方案：ACK 托管 Pro 集群 + GPU 节点池 + OSS/CPFS 存储 + Fluid 数据加速 + Argo Workflows + KubeRay。'
+
+Parameters:
+  PayType:
+    Type: String
+    Label:
+      en: ECS Instance Charge Type
+      zh-cn: 付费类型
+    Default: PostPaid
+    AllowedValues:
+      - PostPaid
+      - PrePaid
+    AssociationProperty: ChargeType
+    AssociationPropertyMetadata:
+      LocaleKey: InstanceChargeType
+  PayPeriodUnit:
+    Type: String
+    Label:
+      en: Pay Period Unit
+      zh-cn: 购买资源时长周期
+    Default: Month
+    AllowedValues:
+      - Month
+      - Year
+    AssociationProperty: PayPeriodUnit
+    AssociationPropertyMetadata:
+      Visible:
+        Condition:
+          Fn::Not:
+            Fn::Equals:
+              - ${PayType}
+              - PostPaid
+  PayPeriod:
+    Type: Number
+    Label:
+      en: Period
+      zh-cn: 购买资源时长
+    Description:
+      en: When the resource purchase duration is Month, the value of Period ranges from 1 to 9, 12, 24, 36, 48, or 60. <br><b><font color='red'> Valid only when ECS instance types are PrePaid </b></font>
+      zh-cn: 当购买资源时长为 Month 时，Period 取值：1~9 <br><b><font color='red'>当 ECS 实例类型为 PrePaid 时有效</b></font>
+    Default: 1
+    AllowedValues:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+    AssociationProperty: PayPeriod
+    AssociationPropertyMetadata:
+      Visible:
+        Condition:
+          Fn::Not:
+            Fn::Equals:
+              - ${PayType}
+              - PostPaid
+  SysNodeInstanceType:
+    Type: String
+    Label:
+      en: Management Node Instance Type
+      zh-cn: 管控节点规格
+    Description:
+      en: 'Instance type of the management node pool, which hosts control-plane style components (Argo Workflows, KubeRay operator, Fluid, CSI). GPU workloads never run here. Default ecs.g8i.xlarge = 4 vCPU / 16 GiB.'
+      zh-cn: '管控节点池规格，用于承载 Argo Workflows、KubeRay operator、Fluid、CSI 等组件，不承载 GPU 计算。默认 ecs.g8i.xlarge = 4 vCPU / 16 GiB。'
+    Default: ecs.g8i.xlarge
+    Required: true
+    AssociationProperty: ALIYUN::ECS::Instance::InstanceType
+    AssociationPropertyMetadata:
+      ZoneId: ${ZoneId}
+      CreateACKClusterParams:
+        NetworkPlugin: terway-eniip
+  SysNodeCount:
+    Type: Number
+    Label:
+      en: Management Node Count
+      zh-cn: 管控节点数量
+    Description:
+      en: 'Number of management nodes, spread across the two zones you select below. 2 is the minimum for component high availability.'
+      zh-cn: '管控节点数量，会打散到下方选择的两个可用区。组件高可用最少 2 台。'
+    Default: 2
+    MinValue: 2
+    MaxValue: 10
+  LoginPassword:
+    NoEcho: true
+    Type: String
+    Label:
+      en: Node Login Password
+      zh-cn: 节点登录密码
+    Description:
+      en: Server login password, Length 8-30, must contain three(Capital letters, lowercase letters, numbers, ()`~!@#$%^&*_-+=|{}[]:;<>,.?/ Special symbol in)
+      zh-cn: 服务器登录密码,长度8-30，必须包含三项（大写字母、小写字母、数字、 ()`~!@#$%^&*_-+=|{}[]:;<>,.?/ 中的特殊符号）
+    ConstraintDescription:
+      en: Length 8-30, must contain three(Capital letters, lowercase letters, numbers, ()`~!@#$%^&*_-+=|{}[]:;<>,.?/ Special symbol in)
+      zh-cn: 长度8-30，必须包含三项（大写字母、小写字母、数字、 ()`~!@#$%^&*_-+=|{}[]:;<>,.?/ 中的特殊符号）
+    AssociationProperty: ALIYUN::ECS::Instance::Password
+    AllowedPattern: '^[a-zA-Z0-9-\(\)\`\~\!\@\#\$\%\^\&\*\_\-\+\=\|\{\}\[\]\:\;\<\>\,\.\?\/]*$'
+    MinLength: 8
+    MaxLength: 30
+  GpuNodeInstanceType:
+    Type: String
+    Label:
+      en: GPU Compute Node Instance Type
+      zh-cn: GPU 算力节点规格
+    Description:
+      en: '<b>⚠ L20N bare metal is sold out in all regions and its elastic quota defaults to 0 — apply for the L20N quota / whitelist before deploying, otherwise creation fails with InstanceTypeNoStock or QuotaExceed.</b><br>Only L20N bare metal (ebmgn9g*) ships the two eRDMA NICs this service relies on. ecs.ebmgn9g.64xlarge = 256 vCPU / 2304 GiB / 8 x L20N 48 GB (cheapest). The VLA pipeline also runs on it (stages 2/3 each take 0.5 card).'
+      zh-cn: '<b>⚠ L20N 裸金属当前全地域售罄、弹性配额默认为 0——部署前必须先申请 L20N 配额/白名单，否则会以 InstanceTypeNoStock 或 QuotaExceed 失败。</b><br>只有 L20N 裸金属（ebmgn9g*）默认配备本服务依赖的两张 eRDMA 网卡。ecs.ebmgn9g.64xlarge = 256 vCPU / 2304 GiB / 8×L20N 48G（最便宜）。VLA 流水线也跑在它上（Stage 2/3 各占 0.5 卡）。'
+    Default: ecs.ebmgn9g.64xlarge
+    AllowedValues:
+      - ecs.ebmgn9g.64xlarge
+      - ecs.ebmgn9gc.64xlarge
+      - ecs.ebmgn9ge.64xlarge
+    Required: true
+    AssociationProperty: ALIYUN::ECS::Instance::InstanceType
+    AssociationPropertyMetadata:
+      ZoneId: ${ZoneId}
+      CreateACKClusterParams:
+        NetworkPlugin: terway-eniip
+  GpuNodeCount:
+    Type: Number
+    Label:
+      en: GPU Node Count
+      zh-cn: GPU 节点数量
+    Description:
+      en: 'Number of GPU nodes. All GPU nodes sit in the primary zone so that they share the same vSwitch and storage mount path. <b>One node with one card is enough to run the built-in demo end to end</b> (the two GPU stages each take 0.5 card and share it); scale out only when you want more parallelism.'
+      zh-cn: 'GPU 节点数量。GPU 节点全部落在主可用区，以便共用同一交换机与存储挂载路径。<b>1 节点 1 卡即可完整跑通内置 Demo</b>（两个 GPU 阶段各占 0.5 卡、共居一张卡）；只有需要更高并行度时才扩容。'
+    Default: 1
+    MinValue: 0
+    MaxValue: 16
+  ErdmaImageId:
+    Type: String
+    Label:
+      en: eRDMA Marketplace Image ID
+      zh-cn: eRDMA 云市场镜像 ID
+    Description:
+      en: 'Marketplace image "Alibaba Cloud Linux 3 64-bit (eRDMA software stack preinstalled)", product code cmjj00066236. <b>You must subscribe to this image with the deploying account first, otherwise node creation fails.</b> Leave empty to use the version erdma_0.2.39_v1 image of the current region.'
+      zh-cn: '云市场镜像「Alibaba Cloud Linux 3 64位（预装 eRDMA 软件栈）」，商品码 cmjj00066236。<b>部署账号必须先订阅该镜像，否则节点创建失败。</b>留空则自动使用当前地域的 erdma_0.2.39_v1 版本镜像。'
+    Default: ''
+  # 注：以下四个属于内部实现细节的参数已不再向消费者暴露，直接写死在资源里：
+  #   GpuNodeSystemDiskSize → 500 GiB；NvidiaDriverVersion → 不固定（由 ACK 为所选 GPU 规格装默认驱动）；
+  #   NodeImageType → AliyunLinux3ContainerOptimized；ContainerdVersion → 2.1.9。
+  # 后两个只有一个合法取值（1.35+ 集群只接受 cgroup v2 镜像，containerd 只提供 2.1.9），
+  # 暂露给用户只会多出两个填错就整栈失败的机会。后续 ACK 变更时由服务商改模板。
+  #
+  # 以下 OSS 参数参照 service-c8bf02afe7544025be47（LLM 推理服务-容器集群）的做法：
+  # 默认新建 Bucket + 自动创建仅限该 Bucket 权限的 RAM 用户与 AK，消费者无需自备 AK。
+  CreateOSS:
+    Type: String
+    Label:
+      en: OSS Bucket Option
+      zh-cn: OSS Bucket 选项
+    Description:
+      en: 'The OSS bucket holds the input videos and model weights, and is mounted read-only into the pipeline pods.<br><b>New Bucket</b>: creates a bucket automatically and generates a dedicated RAM user + AccessKey scoped to it.<br><b>Existing Bucket</b>: reuses a bucket you already have.'
+      zh-cn: 'OSS Bucket 用于存放输入视频与模型权重，以只读方式挂载进流水线 Pod。<br><b>新建Bucket</b>：自动创建 Bucket，并生成仅限该 Bucket 权限的专用 RAM 用户与 AccessKey，无需您提供凭证。<br><b>已有Bucket</b>：复用您已有的 Bucket。'
+    Default: 新建Bucket
+    Required: true
+    AllowedValues:
+      - 新建Bucket
+      - 已有Bucket
+  ExistingOSSBucket:
+    Type: String
+    Label:
+      en: Existing OSS Bucket Name
+      zh-cn: 已有 OSS Bucket 名称
+    Description:
+      en: 'Name of the existing OSS bucket (required when not creating a new one). It must be in the same region as the cluster.'
+      zh-cn: '已有 OSS Bucket 的名称（选「已有Bucket」时必填），需与集群同地域。'
+    Default: ''
+    AssociationProperty: 'ALIYUN::OSS::Bucket::BucketName'
+    AssociationPropertyMetadata:
+      Visible:
+        Condition:
+          Fn::Equals:
+            - ${CreateOSS}
+            - 已有Bucket
+  OSSAkOption:
+    Type: String
+    Label:
+      en: OSS AccessKey Option
+      zh-cn: OSS AK 选项
+    Description:
+      en: '<b>NewAK</b>: ComputeNest creates a RAM user and AccessKey with permissions limited to the bucket above (recommended).<br><b>ExistAK</b>: you provide an AccessKey that already has oss:* permission on that bucket.'
+      zh-cn: '<b>NewAK</b>：由服务自动创建 RAM 用户与 AccessKey，权限仅限上方 Bucket（推荐）。<br><b>ExistAK</b>：您自行提供对该 Bucket 有 oss:* 权限的 AccessKey。<br>需要的权限策略：<pre><code>{"Version":"1","Statement":[{"Action":"oss:*","Resource":["acs:oss:*:*:BUCKET_NAME","acs:oss:*:*:BUCKET_NAME/*"],"Effect":"Allow"}]}</code></pre>'
+    Default: NewAK
+    Required: true
+    AllowedValues:
+      - NewAK
+      - ExistAK
+  AccessKeyId:
+    Type: String
+    Label:
+      en: Access Key ID
+      zh-cn: AccessKeyId
+    Description:
+      en: 'AccessKey ID that has oss:* permission on the bucket (required only when OSS AK Option is ExistAK).'
+      zh-cn: '已有 AccessKeyId，需对上方 Bucket 有 oss:* 权限（仅当 OSS AK 选项为 ExistAK 时需填）。'
+    Default: ''
+    AssociationPropertyMetadata:
+      Visible:
+        Condition:
+          Fn::Equals:
+            - ${OSSAkOption}
+            - ExistAK
+  AccessKeySecret:
+    NoEcho: true
+    Type: String
+    Label:
+      en: Access Key Secret
+      zh-cn: AccessKeySecret
+    Description:
+      en: 'AccessKey Secret of the AccessKey above. Stored as a Kubernetes Secret in the solution namespace.'
+      zh-cn: '上述 AccessKey 对应的 Secret，以 Kubernetes Secret 形式保存在方案命名空间中。'
+    Default: ''
+    AssociationPropertyMetadata:
+      Visible:
+        Condition:
+          Fn::Equals:
+            - ${OSSAkOption}
+            - ExistAK
+  ZoneId:
+    Type: String
+    Label:
+      en: Primary Zone ID
+      zh-cn: 主可用区
+    Description:
+      en: 'Primary zone. The GPU node pool is pinned to this zone only, so that GPU nodes share one vSwitch and stay in the same zone as the shared storage mount target. Pick a zone that has inventory for the GPU instance type you selected.'
+      zh-cn: '主可用区。GPU 节点池只落在该可用区，以便 GPU 节点共用同一交换机，并与共享存储的挂载点同可用区。请选择所选 GPU 规格有库存的可用区。'
+    Required: true
+    AssociationProperty: ALIYUN::ECS::Instance:ZoneId
+  ZoneIdSecondary:
+    Type: String
+    Label:
+      en: Secondary Zone ID
+      zh-cn: 次可用区
+    Description:
+      en: 'Secondary zone, used only to spread management nodes for component high availability. It must differ from the primary zone.'
+      zh-cn: '次可用区，仅用于打散管控节点以实现组件高可用，必须与主可用区不同。'
+    Required: true
+    AssociationProperty: ALIYUN::ECS::Instance:ZoneId
+  VpcOption:
+    Type: String
+    Label:
+      en: Select Existing or New VPC
+      zh-cn: 选择已有/新建的专有网络
+    Default: NewVPC
+    AllowedValues:
+      - NewVPC
+      - ExistingVPC
+    AssociationPropertyMetadata:
+      ValueLabelMapping:
+        NewVPC:
+          zh-cn: 新建专有网络
+          en: New VPC
+        ExistingVPC:
+          zh-cn: 已有专有网络
+          en: Existing VPC
+    Required: true
+  VpcId:
+    Type: String
+    Label:
+      en: VPC ID
+      zh-cn: 专有网络 VPC 实例 ID
+    Description:
+      en: Please search the ID starting with (vpc-xxx) from console-Virtual Private Cloud
+      zh-cn: 现有虚拟专有网络的实例 ID
+    Default: ''
+    AssociationProperty: 'ALIYUN::ECS::VPC::VPCId'
+    AssociationPropertyMetadata:
+      RegionId: '${RegionId}'
+      Visible:
+        Condition:
+          Fn::Equals:
+            - ExistingVPC
+            - ${VpcOption}
+  VSwitchId:
+    Type: String
+    Label:
+      en: Primary VSwitch ID
+      zh-cn: 主可用区交换机 ID
+    Description:
+      en: 'Existing vSwitch in the primary zone. It carries management nodes, all GPU nodes and Terway Pod IPs, so a large CIDR (/20 or bigger) is recommended.'
+      zh-cn: '主可用区的已有交换机。它承载管控节点、全部 GPU 节点以及 Terway 的 Pod IP，建议使用较大网段（/20 及以上）。'
+    Default: ''
+    AssociationProperty: 'ALIYUN::ECS::VSwitch::VSwitchId'
+    AssociationPropertyMetadata:
+      VpcId: '${VpcId}'
+      ZoneId: '${ZoneId}'
+      Visible:
+        Condition:
+          Fn::Equals:
+            - ExistingVPC
+            - ${VpcOption}
+  VSwitchIdSecondary:
+    Type: String
+    Label:
+      en: Secondary VSwitch ID
+      zh-cn: 次可用区交换机 ID
+    Description:
+      en: 'Existing vSwitch in the secondary zone, used by management nodes and their Pod IPs.'
+      zh-cn: '次可用区的已有交换机，用于管控节点及其 Pod IP。'
+    Default: ''
+    AssociationProperty: 'ALIYUN::ECS::VSwitch::VSwitchId'
+    AssociationPropertyMetadata:
+      VpcId: '${VpcId}'
+      ZoneId: '${ZoneIdSecondary}'
+      Visible:
+        Condition:
+          Fn::Equals:
+            - ExistingVPC
+            - ${VpcOption}
+  VpcCidrBlock:
+    Type: String
+    Label:
+      en: VPC CIDR IPv4 Block
+      zh-cn: 专有网络 IPv4 网段
+    Description:
+      zh-cn: VPC 的 ip 地址段范围，<br>您可以使用以下的 ip 地址段或其子网:<br><font color='green'>[10.0.0.0/8]</font><br><font color='green'>[172.16.0.0/12]</font><br><font color='green'>[192.168.0.0/16]</font>
+      en: 'The ip address range of the VPC in the CidrBlock form; <br>You can use the following ip address ranges and their subnets: <br><font color=''green''>[10.0.0.0/8]</font><br><font color=''green''>[172.16.0.0/12]</font><br><font color=''green''>[192.168.0.0/16]</font>'
+    Default: 192.168.0.0/16
+    AssociationProperty: ALIYUN::VPC::VPC::CidrBlock
+    AssociationPropertyMetadata:
+      Visible:
+        Condition:
+          Fn::Equals:
+            - NewVPC
+            - ${VpcOption}
+  VSwitchCidrBlock:
+    Type: String
+    Label:
+      en: Primary VSwitch CIDR Block
+      zh-cn: 主可用区交换机网段
+    Description:
+      zh-cn: 必须属于 VPC 的子网段。该网段同时供节点和 Terway Pod 使用，单台 ebmgn9gc 会占用大量 IP，建议 /20 及以上。
+      en: Must belong to the subnet segment of VPC. This CIDR serves both nodes and Terway Pod IPs, and a single ebmgn9gc consumes a large number of IPs, so /20 or bigger is recommended.
+    Default: 192.168.0.0/20
+    AssociationProperty: ALIYUN::VPC::VSwitch::CidrBlock
+    AssociationPropertyMetadata:
+      VpcCidrBlock: VpcCidrBlock
+      Visible:
+        Condition:
+          Fn::Equals:
+            - NewVPC
+            - ${VpcOption}
+  VSwitchCidrBlockSecondary:
+    Type: String
+    Label:
+      en: Secondary VSwitch CIDR Block
+      zh-cn: 次可用区交换机网段
+    Description:
+      zh-cn: 必须属于 VPC 的子网段，且不能与主可用区交换机网段重叠。
+      en: Must belong to the subnet segment of VPC and must not overlap the primary vSwitch CIDR.
+    Default: 192.168.16.0/20
+    AssociationProperty: ALIYUN::VPC::VSwitch::CidrBlock
+    AssociationPropertyMetadata:
+      VpcCidrBlock: VpcCidrBlock
+      Visible:
+        Condition:
+          Fn::Equals:
+            - NewVPC
+            - ${VpcOption}
+  ServiceCidr:
+    Type: String
+    Label:
+      zh-cn: Service CIDR
+      en: Service CIDR
+    Description:
+      zh-cn: 可选范围：10.0.0.0/16-24，172.16-31.0.0/16-24，192.168.0.0/16-24<br>不能与 VPC 及 VPC 内已有 Kubernetes 集群使用的网段重复。<font color='blue'><b>创建成功后不能修改</b></font>
+      en: 'Optional range: 10.0.0.0/16-24, 172.16-31.0.0/16-24, 192.168.0.0/16-24<br> cannot duplicate segments already used by existing Kubernetes clusters in VPC and VPC.<font color=''blue''><b>Cannot be modified after successful creation</b></font>'
+    Default: 172.16.0.0/16
+    AssociationProperty: ALIYUN::CS::ManagedKubernetesCluster::ServiceCidr
+    AssociationPropertyMetadata:
+      VpcId: ${VpcId}
+      RegionId: ${RegionId}
+      ClusterType: ManagedKubernetes
+      NodeCidrMask: 26
+
+Mappings:
+  # 云市场镜像「Alibaba Cloud Linux 3 64位（预装eRDMA软件栈）」cmjj00066236，版本 erdma_0.2.39_v1
+  ErdmaMarketImage:
+    cn-hangzhou:
+      ImageId: m-bp160ny2tx688nz1x4ff
+    cn-beijing:
+      ImageId: m-2ze8gkawny9b3oznby61
+    cn-shanghai:
+      ImageId: m-uf65n4utc5xzmb4uh5lf
+
+Conditions:
+  # OSS：新建 Bucket / 已有 Bucket；自动新建 RAM 用户+AK / 用户自备 AK
+  CreateNewOSSCondition:
+    Fn::Equals:
+      - 新建Bucket
+      - Ref: CreateOSS
+  CreateNewRamCondition:
+    Fn::Equals:
+      - NewAK
+      - Ref: OSSAkOption
+  PrePaidCondition:
+    Fn::Equals:
+      - PrePaid
+      - Ref: PayType
+  UseMappedImageCondition:
+    Fn::Equals:
+      - ''
+      - Ref: ErdmaImageId
+Resources:
+  VpcModule:
+    Type: MODULE::ACS::ComputeNest::VpcAndVSwitch
+    Version: default
+    Properties:
+      VpcOption:
+        Ref: VpcOption
+      VpcId:
+        Ref: VpcId
+      VpcCidrBlock:
+        Ref: VpcCidrBlock
+      EnableDualZones: true
+      ZoneId:
+        Ref: ZoneId
+      VSwitchId:
+        Ref: VSwitchId
+      VSwitchCidrBlock:
+        Ref: VSwitchCidrBlock
+      ZoneIdSecondary:
+        Ref: ZoneIdSecondary
+      VSwitchIdSecondary:
+        Ref: VSwitchIdSecondary
+      VSwitchCidrBlockSecondary:
+        Ref: VSwitchCidrBlockSecondary
+  # ACK 托管 Pro 集群 + Terway-ENIIP：Terway 基于弹性网卡，Pod 直通 VPC，
+  # 数据密集型负载下网络开销低于 flannel 的隧道方案。
+  # ACK 托管 Pro 集群（裸资源，不用 MODULE::ACS::ComputeNest::AckOrAcsCluster）。
+  # 实测原因：该模块（含最新 v5）给内部 worker 节点池硬编码了 2024-05 的 Alinux3 镜像（cgroup v1），
+  # 而 ACK 现只提供 K8s 1.34+（containerd 2.1.9）、要求 cgroup v2 镜像，导致节点池必然创建失败，
+  # 且模块无镜像参数、WorkerInstanceCount 最小 1、无可回退的旧 K8s 版本，无法绕过。
+  # 自建节点池只指定 ImageType、不锁 ImageId，由 ACK 选当前镜像，即可满足 cgroup v2。
+  AckCluster:
+    Type: ALIYUN::CS::ManagedKubernetesCluster
+    DependsOn:
+      - VpcModule
+    Properties:
+      Name:
+        Ref: ALIYUN::StackName
+      ClusterSpec: ack.pro.small
+      VpcId:
+        Fn::GetAtt:
+          - VpcModule
+          - VpcId
+      # 节点与 Pod 均使用这两个交换机（Terway-ENIIP）
+      VSwitchIds:
+        - Fn::GetAtt:
+            - VpcModule
+            - VSwitchId
+        - Fn::GetAtt:
+            - VpcModule
+            - VSwitchIdSecondary
+      PodVswitchIds:
+        - Fn::GetAtt:
+            - VpcModule
+            - VSwitchId
+        - Fn::GetAtt:
+            - VpcModule
+            - VSwitchIdSecondary
+      ServiceCidr:
+        Ref: ServiceCidr
+      ProxyMode: ipvs
+      SnatEntry: true
+      EndpointPublicAccess: true
+      # 不显式固定 KubernetesVersion / Runtime，跟随 ACK 当前默认，避免版本下线后模板失效
+      # 注：Addons 列表内不能用 Fn::If + ALIYUN::NoValue（ROS 会报 NoneType iteritems 内部错误），
+      # 因此条件组件（如 cnfs-nas-daemon）用独立的 ClusterAddons 资源安装。
+      Addons:
+        - Name: terway-eniip
+        - Name: csi-plugin
+        - Name: csi-provisioner
+  # 管控节点池：承载 Argo / KubeRay / Fluid / CSI 等组件，跟着两个交换机跨可用区打散
+  SysNodePool:
+    Type: ALIYUN::CS::ClusterNodePool
+    DependsOn:
+      - AckCluster
+    Properties:
+      ClusterId:
+        Fn::GetAtt:
+          - AckCluster
+          - ClusterId
+      Count:
+        Ref: SysNodeCount
+      NodePoolInfo:
+        Name: sys-pool
+      ScalingGroup:
+        InstanceTypes:
+          - Ref: SysNodeInstanceType
+        VSwitchIds:
+          - Fn::GetAtt:
+              - VpcModule
+              - VSwitchId
+          - Fn::GetAtt:
+              - VpcModule
+              - VSwitchIdSecondary
+        # 1.35+ 集群只接受 cgroup v2 镜像，普通 AliyunLinux3 会被拒
+        ImageType: AliyunLinux3ContainerOptimized
+        SystemDiskCategory: cloud_essd
+        SystemDiskSize: 200
+        InstanceChargeType:
+          Ref: PayType
+        Period:
+          Fn::If:
+            - PrePaidCondition
+            - Ref: PayPeriod
+            - Ref: ALIYUN::NoValue
+        PeriodUnit:
+          Fn::If:
+            - PrePaidCondition
+            - Ref: PayPeriodUnit
+            - Ref: ALIYUN::NoValue
+        LoginPassword:
+          Ref: LoginPassword
+      KubernetesConfig:
+        Runtime: containerd
+        # ACK 当前为 1.34/1.35/1.36 只提供 containerd 2.1.9；Runtime 与 RuntimeVersion 必须成对
+        RuntimeVersion: 2.1.9
+        Labels:
+          - Key: robot-solution.aliyun.com/node-role
+            Value: system
+  # 三个组件都是方案必需，不再做开关（关掉任一个方案就不完整）
+  KubeRayAddon:
+    Type: ALIYUN::CS::ClusterAddons
+    DependsOn:
+      - SysNodePool
+    Properties:
+      ClusterId:
+        Fn::GetAtt:
+          - AckCluster
+          - ClusterId
+      Addons:
+        - Name: kuberay-operator
+      InstalledIgnore: true
+      RolePolicy: EnsureAdminRoleAndBinding
+      # kuberay-operator 在 ACK 托管 Pro 上是「托管组件」：operator 跑在 ACK 管控面，
+      # 集群内看不到任何 Deployment（实测：kubectl get deploy -A 无 kuberay，
+      # 但 ray.io 的 CRD 已存在、addon 状态 active）。因此就绪信号只能看 CRD，
+      # 不能等 Deployment，否则 JsonPath 取到 None 一定超时。
+      # 注：JsonPath 不能以 . 开头；字符串比较无需 ValueType，但 FirstMatch 必须加（否则返回列表）。
+      WaitUntil:
+        - Kind: CustomResourceDefinition
+          ApiVersion: apiextensions.k8s.io/v1
+          Name: rayjobs.ray.io
+          JsonPath: 'status.acceptedNames.kind'
+          FirstMatch: true
+          Operator: Equals
+          Value: RayJob
+          Timeout: 600
+  ErdmaControllerAddon:
+    Type: ALIYUN::CS::ClusterAddons
+    DependsOn:
+      - SysNodePool
+    Properties:
+      ClusterId:
+        Fn::GetAtt:
+          - AckCluster
+          - ClusterId
+      Addons:
+        - Name: ack-erdma-controller
+          Config: '{"agent":{"preferDriver":"ofed","allocateAllDevices":true}}'
+      InstalledIgnore: true
+  # 坑 3：Terway 会接管节点上的弹性网卡，导致 L20N 随实例出厂的两张 eRDMA 网卡 IP 冲突。
+  # 官方修复方式是给 eni-config 加白名单 eni_tag_filter，只让 Terway 管理自己创建的网卡
+  # （Terway 给自建网卡打的标签就是 creator=terway）。该 Job 幂等，且必须在 GPU 节点加入前完成。
+  TerwayEniWhitelist:
+    Type: ALIYUN::CS::ClusterApplication
+    DependsOn:
+      - SysNodePool
+    Properties:
+      ClusterId:
+        Fn::GetAtt:
+          - AckCluster
+          - ClusterId
+      DefaultNamespace: kube-system
+      CreationMode: Apply
+      # RolePolicy 保持默认 EnsureAdminRoleAndBinding（实测结论，勿改成 None）：
+      # ROS 会为部署身份创建 ros:application-admin ClusterRole/Binding，WaitUntil 读取
+      # CRD、Deployment 等集群资源全靠它。改成 None 会报 403
+      # “User \"<uid>\" cannot get resource customresourcedefinitions at the cluster scope”。
+      # 曾见到的 “RAM policy Forbidden for action cs:DescribeUserPermission” 不是模板问题，
+      # 而是用服务商（supplier）账号去创建服务实例造成的——该 RAM 用户没有此权限；
+      # 正确的部署身份是消费者账号，实测消费者账号可正常调用该接口。
+      RolePolicy: EnsureAdminRoleAndBinding
+      WaitUntil:
+        - Kind: Job
+          Name: erdma-terway-eni-whitelist
+          Namespace: kube-system
+          JsonPath: 'status.succeeded'
+          # 两个设置都必选（实测）：不加 FirstMatch 时 JsonPath 返回列表 [1]；
+          # 不加 ValueType: Json 时 Value 按字符串 '1' 与整数 1 比较。
+          # 两者缺一都会导致 Job 已成功但资源一直等到 ResourceCreateTimeout。
+          FirstMatch: true
+          Operator: Equals
+          Value: '1'
+          ValueType: Json
+          Timeout: 900
+      YamlContent:
+        Fn::Sub: |
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            name: erdma-terway-patch
+            namespace: kube-system
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: Role
+          metadata:
+            name: erdma-terway-patch
+            namespace: kube-system
+          rules:
+            - apiGroups: [""]
+              resources: ["configmaps"]
+              verbs: ["get", "patch"]
+            - apiGroups: [""]
+              resources: ["pods"]
+              verbs: ["get", "list", "delete"]
+            - apiGroups: ["apps"]
+              resources: ["daemonsets"]
+              verbs: ["get", "list", "watch"]
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          metadata:
+            name: erdma-terway-patch
+            namespace: kube-system
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: Role
+            name: erdma-terway-patch
+          subjects:
+            - kind: ServiceAccount
+              name: erdma-terway-patch
+              namespace: kube-system
+          ---
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: erdma-terway-eni-whitelist
+            namespace: kube-system
+          spec:
+            backoffLimit: 3
+            template:
+              metadata:
+                labels:
+                  app: erdma-terway-eni-whitelist
+              spec:
+                restartPolicy: OnFailure
+                serviceAccountName: erdma-terway-patch
+                tolerations:
+                  - operator: Exists
+                containers:
+                  - name: patch
+                    image: registry-vpc.${ALIYUN::Region}.aliyuncs.com/acs/kubectl:latest
+                    command: ["/bin/bash", "-c"]
+                    args:
+                      - |
+                        set -eo pipefail
+                        CONF=$(kubectl -n kube-system get cm eni-config -o jsonpath='{.data.eni_conf}')
+                        echo "===== eni_conf before ====="
+                        echo "$CONF"
+                        if echo "$CONF" | jq -e 'has("eni_tag_filter")' >/dev/null 2>&1; then
+                          echo "eni_tag_filter already configured, nothing to do"
+                          exit 0
+                        fi
+                        NEW=$(echo "$CONF" | jq -c '. + {eni_tag_filter: {creator: "terway"}}')
+                        kubectl -n kube-system patch cm eni-config --type merge \
+                          -p "$(jq -nc --arg c "$NEW" '{data: {eni_conf: $c}}')"
+                        echo "===== eni_conf after ====="
+                        kubectl -n kube-system get cm eni-config -o jsonpath='{.data.eni_conf}'
+                        echo
+                        kubectl -n kube-system delete pod -l app=terway-eniip --wait=false
+                        sleep 15
+                        kubectl -n kube-system rollout status ds/terway-eniip --timeout=420s
+                        echo "===== terway restarted with ENI whitelist ====="
+  # eRDMA 组件的 DaemonSet 与 Terway 重启都需要时间稳定，之后再拉起 GPU 节点池
+  AddonReadySleep:
+    Type: ALIYUN::ROS::Sleep
+    # GPU 池经 AddonReadySleep 间接依赖：必须等 eRDMA 组件与 Terway 白名单就绪后再拉起 L20N 节点，
+    # 否则 eRDMA 不生效（白名单只对新加入节点生效）。
+    DependsOn:
+      - SysNodePool
+      - ErdmaControllerAddon
+      - TerwayEniWhitelist
+    Properties:
+      CreateDuration: 120
+  # GPU 算力节点池。固定在主可用区，以便与存储挂载路径、交换机保持一致。
+  GpuNodePool:
+    Type: ALIYUN::CS::ClusterNodePool
+    DependsOn:
+      - AddonReadySleep
+    Properties:
+      ClusterId:
+        Fn::GetAtt:
+          - AckCluster
+          - ClusterId
+      Count:
+        Ref: GpuNodeCount
+      NodePoolInfo:
+        Name: gpu-pool
+      ScalingGroup:
+        InstanceTypes:
+          - Ref: GpuNodeInstanceType
+        # GPU 节点全部落主可用区，与存储挂载点保持同可用区
+        VSwitchIds:
+          - Fn::GetAtt:
+              - VpcModule
+              - VSwitchId
+        ZoneIds:
+          - Ref: ZoneId
+        ImageId:
+          Fn::If:
+            - UseMappedImageCondition
+            - Fn::FindInMap:
+                - ErdmaMarketImage
+                - Ref: ALIYUN::Region
+                - ImageId
+            - Ref: ErdmaImageId
+        # 云市场 eRDMA 镜像本身是 cgroup v2 的 Alinux3，配合 Container-Optimized 类型声明
+        ImageType: AliyunLinux3ContainerOptimized
+        SystemDiskCategory: cloud_essd
+        SystemDiskSize: 500
+        InstanceChargeType:
+          Ref: PayType
+        Period:
+          Fn::If:
+            - PrePaidCondition
+            - Ref: PayPeriod
+            - Ref: ALIYUN::NoValue
+        PeriodUnit:
+          Fn::If:
+            - PrePaidCondition
+            - Ref: PayPeriodUnit
+            - Ref: ALIYUN::NoValue
+        LoginPassword:
+          Ref: LoginPassword
+      KubernetesConfig:
+        Runtime: containerd
+        RuntimeVersion: 2.1.9
+        # 固定 NVIDIA 驱动版本为 580.126.09（官方 L20N + eRDMA 文档要求）。
+        # 保留 robot-solution.aliyun.com/node-role=gpu：VLA Demo 靠它调度到 GPU 节点。
+        Labels:
+          - Key: ack.aliyun.com/nvidia-driver-version
+            Value: '580.126.09'
+          - Key: robot-solution.aliyun.com/node-role
+            Value: gpu
+        # 隔离 GPU 节点，防止管控组件调度上来占用算力；Demo 通过 toleration 调度
+        Taints:
+          - Key: nvidia.com/gpu
+            Value: 'true'
+            Effect: NoSchedule
+        # 注（实测踩坑）：这里必须传**明文脚本**，不能用 Fn::Base64Encode。
+        # ROS 会自己做编码（官方说明：User data should not be base64 encoded）。
+        # 若自行 base64，ACK 会把这串 base64 当成脚本正文写进节点的
+        # /var/lib/cloud/instance/user-data.txt，脚本一行都不会执行 —— 现象是节点正常入集群、
+        # 但 /usr/bin/disable_pcie_acs 不存在、/var/log/erdma-bootstrap.log 也不存在，且毫无报错。
+        UserData:
+          Fn::Join:
+            - ''
+            - - "#!/bin/bash\nERDMA_INSTALLER_URL='http://mirrors.cloud.aliyuncs.com/erdma/erdma_installer-1.5.9.tar.gz'\n"
+              - |
+                # L20N eRDMA 节点初始化：① 升级 eRDMA 驱动 ② 关闭 PCIe ACS ③ 落地并执行环境体检
+                # 全过程只告警不退出，避免单项失败导致整个节点池创建回滚。
+                exec >>/var/log/erdma-bootstrap.log 2>&1
+                set -x
+                date
+                ERDMA_MIRROR='http://mirrors.cloud.aliyuncs.com/erdma'
+
+                # ① 升级 eRDMA 驱动大包。≥1.5.9 默认启用 MPCC 拥塞算法，且 NCCL 不再需要 NCCL_GRAPH_FILE。
+                if [ -n "$ERDMA_INSTALLER_URL" ]; then
+                  cd /root
+                  curl -fsSL -O "$ERDMA_MIRROR/env_setup.sh" \
+                    && bash env_setup.sh --url "$ERDMA_INSTALLER_URL" \
+                    || echo "[WARN] erdma driver upgrade failed, falling back to the driver shipped in the image"
+                fi
+
+                # ② 关闭 PCIe ACS。L20N 的 8 张卡之间没有 NVLink/NVSwitch，机内通信走 PCIe，
+                # 关闭 ACS 才能打开 GPU 与 eRDMA 网卡之间的 P2P 能力。
+                cat <<'ACSEOF' >/usr/bin/disable_pcie_acs
+                #!/bin/bash
+                ret=0
+                found_acs_pci=0
+                for BDF in $(lspci -d "*:*:*" | awk '{print $1}'); do
+                  setpci -v -s ${BDF} ECAP_ACS+0x6.w >/dev/null 2>&1
+                  if [ $? -ne 0 ]; then
+                    continue
+                  else
+                    found_acs_pci=1
+                    setpci -v -s ${BDF} ECAP_ACS+0x6.w=0000
+                    if [ $? -eq 0 ]; then
+                      echo "[SUCCESS] Disabled ACS on ${BDF}"
+                    else
+                      echo "[ERROR] Failed to Disable ACS on ${BDF}"
+                      ((ret++))
+                    fi
+                  fi
+                done
+                if [ $found_acs_pci -eq 0 ]; then
+                  echo "[SKIP] no device found that supports ACS"
+                fi
+                exit $ret
+                ACSEOF
+                chmod +x /usr/bin/disable_pcie_acs
+                cat <<'SVCEOF' >/etc/systemd/system/disable_pcie_acs.service
+                [Unit]
+                Description=Disable PCIe Access Control Services (ACS)
+                After=multi-user.target
+
+                [Service]
+                Type=oneshot
+                ExecStart=/usr/bin/disable_pcie_acs
+                RemainAfterExit=yes
+
+                [Install]
+                WantedBy=multi-user.target
+                SVCEOF
+                systemctl daemon-reload
+                systemctl enable disable_pcie_acs.service
+                systemctl start disable_pcie_acs.service
+
+                # ③ 落地官方体检脚本并立即自检一次，结果留档便于事后排查
+                curl -fsSL -o /usr/local/bin/erdma_env_check.py "$ERDMA_MIRROR/tools/env_check.py" \
+                  && python3 /usr/local/bin/erdma_env_check.py -s egs_l20n --json >/var/log/erdma_env_check.json 2>&1
+                ibv_devices
+                ibv_devinfo | grep -E 'hca_id|state:|active_mtu'
+                lspci -vvv 2>/dev/null | grep ACSCtl | sort | uniq -c
+                date
+                # 完成标记：三步全部跑完才 touch。体检 DaemonSet 会等这个文件出现再开始检查，
+                # 因为节点 Ready 早于 cloud-init/UserData 跑完（eRDMA 驱动 DKMS 编译耗时），
+                # 不等标记的话“部署完即可看 PASS”会看到步骤②③尚未落地的不完整报告。
+                touch /var/log/erdma-bootstrap.done
+                echo '===== erdma bootstrap finished ====='
+  # 坑 5：把「登录一台节点跑 env_check.py」做成集群内的常驻体检 DaemonSet，
+  # 每台 L20N 节点各跑一次，结果直接用 kubectl logs 查看，无需登录机器。
+  # 借 hostPID + privileged 通过 chroot /proc/1/root 进入宿主机执行，因此复用同一个工具镜像。
+  ErdmaEnvCheck:
+    Type: ALIYUN::CS::ClusterApplication
+    DependsOn:
+      - GpuNodePool
+    Properties:
+      ClusterId:
+        Fn::GetAtt:
+          - AckCluster
+          - ClusterId
+      DefaultNamespace: erdma-check
+      CreationMode: Apply
+      # 就绪门禁：等体检 DaemonSet 的 numberReady 达到 GPU 节点数。容器配了 readinessProbe
+      # 盯 sentinel /tmp/checkdone（检查全部跑完才 touch），所以 numberReady==1 等于“完整报告已生成”。
+      # 不加门禁 / 不配 readinessProbe 的话，节点 Ready（早于 cloud-init 跑完）就会让实例
+      # 提前进 Deployed，用户此时跑 Step1 拿到步骤②③尚未落地的不完整报告。
+      # Value 用 ${GpuNodeCount}：GpuNodeCount=0（先部署控制面、拿到白名单再加 L20N）时
+      # 等 numberReady==0 立即满足，不会卡死整栈。Timeout 2400s 给 L20N 驱动编译留足余量。
+      # 数值判定必须 FirstMatch:true + ValueType:Json，否则就绪了也会等到超时回滚。
+      WaitUntil:
+        - Kind: DaemonSet
+          Name: erdma-env-check
+          Namespace: erdma-check
+          JsonPath: 'status.numberReady'
+          FirstMatch: true
+          Operator: Equals
+          Value:
+            Fn::Sub: '${GpuNodeCount}'
+          ValueType: Json
+          Timeout: 2400
+      # RolePolicy 保持默认 EnsureAdminRoleAndBinding（实测结论，勿改成 None）：
+      # ROS 会为部署身份创建 ros:application-admin ClusterRole/Binding，WaitUntil 读取
+      # CRD、Deployment 等集群资源全靠它。改成 None 会报 403
+      # “User \"<uid>\" cannot get resource customresourcedefinitions at the cluster scope”。
+      # 曾见到的 “RAM policy Forbidden for action cs:DescribeUserPermission” 不是模板问题，
+      # 而是用服务商（supplier）账号去创建服务实例造成的——该 RAM 用户没有此权限；
+      # 正确的部署身份是消费者账号，实测消费者账号可正常调用该接口。
+      RolePolicy: EnsureAdminRoleAndBinding
+      YamlContent:
+        Fn::Sub:
+          - |
+            apiVersion: v1
+            kind: Namespace
+            metadata:
+              name: erdma-check
+            ---
+            apiVersion: apps/v1
+            kind: DaemonSet
+            metadata:
+              name: erdma-env-check
+              namespace: erdma-check
+              labels:
+                app: erdma-env-check
+            spec:
+              selector:
+                matchLabels:
+                  app: erdma-env-check
+              template:
+                metadata:
+                  labels:
+                    app: erdma-env-check
+                spec:
+                  hostPID: true
+                  hostNetwork: true
+                  nodeSelector:
+                    robot-solution.aliyun.com/node-role: gpu
+                  tolerations:
+                    - operator: Exists
+                  containers:
+                    - name: check
+                      image: registry-vpc.${ALIYUN::Region}.aliyuncs.com/acs/kubectl:latest
+                      securityContext:
+                        privileged: true
+                        runAsUser: 0
+                      # 关键：默认容器一启动就算 Ready（numberReady 立即=1），会让
+                      # WaitUntil 在检查还没跑完时就放行。用 readinessProbe 盯住 sentinel 文件
+                      # /tmp/checkdone（检查全部跑完才 touch），让 numberReady==1 真正等于“完整报告已生成”。
+                      # 最长容忍 bootstrap 30min + 检查：period 15s × failureThreshold 160 ≈ 40min。
+                      readinessProbe:
+                        exec:
+                          command: ["/bin/bash", "-c", "test -f /tmp/checkdone"]
+                        initialDelaySeconds: 20
+                        periodSeconds: 15
+                        failureThreshold: 160
+                      resources:
+                        requests:
+                          cpu: 100m
+                          memory: 128Mi
+                        limits:
+                          cpu: 500m
+                          memory: 512Mi
+                      command: ["/bin/bash", "-c"]
+                      args:
+                        - |
+                          host() { chroot /proc/1/root /bin/bash -c "$1"; }
+                          # 先等节点 UserData 引导完成（disable_pcie_acs / env_check 落地）。
+                          # 节点 Ready 早于 cloud-init 跑完，不等就检查会误报步骤②③未完成；
+                          # 最多等 30 分钟（小于 WaitUntil 的 40 分钟超时），超时则带警告继续。
+                          echo "等待节点 UserData 引导完成（/var/log/erdma-bootstrap.done）..."
+                          for w in $(seq 1 180); do
+                            host "test -f /var/log/erdma-bootstrap.done" && { echo "  引导已完成"; break; }
+                            sleep 10
+                          done
+                          host "test -f /var/log/erdma-bootstrap.done" || echo "[WARN] 30 分钟内未见引导完成标记，驱动可能仍在编译，以下结果可能不完整"
+                          PASS=0; FAIL=0; SKIP=0
+                          RESULT=""
+                          # ok <编号> <名称> <判定命令>：命令退出码 0 算 PASS。
+                          # 这里不用 || true 兔子，否则永远看不出真失败。
+                          ok() {
+                            n="$1"; title="$2"; shift 2
+                            if host "$*" >/tmp/o 2>&1; then
+                              echo "  [PASS] $n $title"
+                              PASS=$((PASS+1)); RESULT="$RESULT\n  [PASS] $n $title"
+                            else
+                              echo "  [FAIL] $n $title"
+                              sed 's/^/         /' /tmp/o | head -4
+                              FAIL=$((FAIL+1)); RESULT="$RESULT\n  [FAIL] $n $title"
+                            fi
+                          }
+                          echo "##### eRDMA 体检  node=$NODE_NAME #####"
+                          echo
+                          echo "===== A. 判定项（每项 PASS/FAIL）====="
+                          ok 1 "eRDMA 内核模块已加载" "lsmod | grep -q erdma"
+                          ok 2 "两张 eRDMA 设备存在" "test \$(ibv_devices 2>/dev/null | grep -c erdma) -ge 2"
+                          ok 3 "两张网卡均 PORT_ACTIVE" "test \$(ibv_devinfo 2>/dev/null | grep -c 'state:.*PORT_ACTIVE') -ge 2"
+                          ok 4 "MTU 4096" "ibv_devinfo 2>/dev/null | grep -q 'active_mtu:.*4096'"
+                          ok 5 "NUMA 分别绑定 0 与 1" "test \"\$(cat /sys/class/infiniband/erdma_0/device/numa_node 2>/dev/null)\" = 0 -a \"\$(cat /sys/class/infiniband/erdma_1/device/numa_node 2>/dev/null)\" = 1"
+                          ok 6 "PCIe ACS 已关闭（SrcValid-）" "! (lspci -vvv 2>/dev/null | grep ACSCtl | grep -q 'SrcValid+')"
+                          ok 7 "disable_pcie_acs 开机自启" "systemctl is-enabled disable_pcie_acs.service"
+                          ok 8 "eadm 可用（驱动已升级）" "command -v eadm"
+                          ok 9 "GPU 已被识别" "nvidia-smi -L | grep -q GPU"
+                          # 固定驱动版本时，校验实际装上的是不是请求的那个。不校验的话，标签写了
+                          # ACK 不支持的版本只会静默装成另一个版本，没人发现。
+                          # PINNED_DRIVER 由 DaemonSet 环境变量注入（未固定时为空）。
+                          if [ -n "$PINNED_DRIVER" ]; then
+                            ok 10 "NVIDIA 驱动版本等于所固定的 $PINNED_DRIVER" "nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1 | grep -q '^$PINNED_DRIVER'"
+                          else
+                            echo "  [SKIP] 10 未固定 NVIDIA 驱动版本，由 ACK 装默认驱动"
+                            SKIP=$((SKIP+1))
+                          fi
+                          echo
+                          echo "===== B. 官方一键体检 env_check.py -s egs_l20n ====="
+                          host "test -f /usr/local/bin/erdma_env_check.py || curl -fsSL -o /usr/local/bin/erdma_env_check.py http://mirrors.cloud.aliyuncs.com/erdma/tools/env_check.py; python3 /usr/local/bin/erdma_env_check.py -s egs_l20n" || echo "[WARN] env_check.py 未能执行"
+                          echo
+                          echo "===== C. 原始信息（排查用）====="
+                          echo "-- ibv_devinfo --";  host "ibv_devinfo | grep -E 'hca_id|state:|active_mtu'" || true
+                          echo "-- 拥塞控制（期望 mpcc）--"; host "eadm conf -d erdma_0 -t cc; eadm conf -d erdma_1 -t cc" || true
+                          echo "-- GID（不应冲突）--"; host "show_gids" || true
+                          echo "-- ACSCtl --"; host "lspci -vvv 2>/dev/null | grep ACSCtl | sort | uniq -c" || true
+                          echo "-- 驱动版本 --"; host "eadm ver 2>/dev/null; nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv" || true
+                          echo
+                          echo "##### SUMMARY node=$NODE_NAME  PASS=$PASS FAIL=$FAIL SKIP=$SKIP #####"
+                          echo -e "$RESULT"
+                          if [ "$FAIL" -gt 0 ]; then
+                            echo "##### 结论：有 $FAIL 项未通过，详见上方 [FAIL] 条目与 C 区原始信息 #####"
+                          else
+                            echo "##### 结论：全部判定项 PASS，eRDMA 环境就绪 #####"
+                          fi
+                          # 写 sentinel：readinessProbe 命中它才算 Ready，numberReady==1 于此才成立，
+                          # 也就保证了“部署完即可看到完整报告”。
+                          touch /tmp/checkdone
+                          # 容器常驻，保证 kubectl logs 随时可读
+                          sleep infinity
+                      env:
+                        - name: NODE_NAME
+                          valueFrom:
+                            fieldRef:
+                              fieldPath: spec.nodeName
+                        # 固定驱动时由 Fn::Sub 注入版本号（未固定时为空，体检项 10 转 SKIP）
+                        - name: PINNED_DRIVER
+                          value: "${PinnedDriver}"
+
+          - PinnedDriver: '580.126.09'
+  # 只读输入层：OSS Bucket 由本模板创建，不依赖客户已有资源。
+  # Bucket 名取 StackId 前 8 位十六进制（小写，满足 OSS 命名规则），保证全局唯一；
+  # 不能用 StackName，计算巢实例名含大写字母，OSS Bucket 名不允许大写。
+  OssBucket:
+    Type: ALIYUN::OSS::Bucket
+    Condition: CreateNewOSSCondition
+    Properties:
+      BucketName:
+        Fn::Join:
+          - '-'
+          - - robot-data
+            - Fn::Select:
+                - 0
+                - Fn::Split:
+                    - '-'
+                    - Ref: ALIYUN::StackId
+      AccessControl: private
+      RedundancyType: LRS
+      StorageClass: Standard
+      # 写死 true：本模板会预建 dataset/ 与 models/ 目录，Bucket 永远非空，
+      # 若为 false 则实例永远删不掉。删除实例前请自行备份需要保留的数据。
+      DeletionForce: true
+  # 自动创建专用 RAM 用户与 AccessKey，权限仅限上方 Bucket（参照 LLM 推理服务-容器集群的做法）。
+  # 这样消费者不需要自备 AK，也避开了把个人全局 AK 填进服务参数的风险。
+  OssRamUser:
+    Type: ALIYUN::RAM::User
+    Condition: CreateNewRamCondition
+    Properties:
+      UserName:
+        Ref: ALIYUN::StackName
+      Policies:
+        - PolicyName:
+            Ref: ALIYUN::StackName
+          PolicyDocument:
+            Version: '1'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'oss:*'
+                Resource:
+                  - Fn::Sub:
+                      - 'acs:oss:*:*:${BucketName}'
+                      - BucketName:
+                          Fn::If:
+                            - CreateNewOSSCondition
+                            - Fn::GetAtt:
+                                - OssBucket
+                                - Name
+                            - Ref: ExistingOSSBucket
+                  - Fn::Sub:
+                      - 'acs:oss:*:*:${BucketName}/*'
+                      - BucketName:
+                          Fn::If:
+                            - CreateNewOSSCondition
+                            - Fn::GetAtt:
+                                - OssBucket
+                                - Name
+                            - Ref: ExistingOSSBucket
+  OssAccessKey:
+    Type: ALIYUN::RAM::AccessKey
+    Condition: CreateNewRamCondition
+    DependsOn: OssRamUser
+    Properties:
+      UserName:
+        Ref: ALIYUN::StackName
+  # 预建两个前缀：ossfs 挂载子目录时，目录不存在会导致挂载失败
+  # （已有 Bucket 也一样预建；已存在时为幂等操作）
+  OssDatasetDirectory:
+    Type: ALIYUN::OSS::Directory
+    Properties:
+      BucketName:
+        Fn::If:
+          - CreateNewOSSCondition
+          - Fn::GetAtt:
+              - OssBucket
+              - Name
+          - Ref: ExistingOSSBucket
+      DirectoryName: dataset/
+      # 写死 true：本模板会预建 dataset/ 与 models/ 目录，Bucket 永远非空，
+      # 若为 false 则实例永远删不掉。删除实例前请自行备份需要保留的数据。
+      DeletionForce: true
+  OssModelsDirectory:
+    Type: ALIYUN::OSS::Directory
+    Properties:
+      BucketName:
+        Fn::If:
+          - CreateNewOSSCondition
+          - Fn::GetAtt:
+              - OssBucket
+              - Name
+          - Ref: ExistingOSSBucket
+      DirectoryName: models/
+      # 写死 true：本模板会预建 dataset/ 与 models/ 目录，Bucket 永远非空，
+      # 若为 false 则实例永远删不掉。删除实例前请自行备份需要保留的数据。
+      DeletionForce: true
+  # OSS 预检（参照 service-c8bf02afe7544025be47 的 WaitCondition 回传做法）：
+  # 在创建只读卷之前，先用 ossutil 验证 Bucket 可访问、AK 权限可用、两个前缀存在，
+  # 并把人类可读的失败原因 curl 回 ROS。否则 AK 权限不对 / Bucket 跟集群不同地域
+  # 只会表现为 PVC 一直 Pending，用户在计算巢控制台看不到任何原因。
+  # 用 internal endpoint 顺便把「跟集群同地域」也一并校验了（跨地域 Bucket 走内网域名解析不到）。
+  OssPreflightWaitConditionHandle:
+    Type: ALIYUN::ROS::WaitConditionHandle
+  OssPreflightApplication:
+    Type: ALIYUN::CS::ClusterApplication
+    DependsOn:
+      - AddonReadySleep
+      - OssDatasetDirectory
+      - OssModelsDirectory
+    Properties:
+      ClusterId:
+        Fn::GetAtt:
+          - AckCluster
+          - ClusterId
+      CreationMode: Apply
+      DefaultNamespace: default
+      YamlContent:
+        Fn::Sub:
+          - |
+            apiVersion: batch/v1
+            kind: Job
+            metadata:
+              name: robot-oss-preflight
+              namespace: default
+            spec:
+              backoffLimit: 0
+              ttlSecondsAfterFinished: 600
+              template:
+                metadata:
+                  name: robot-oss-preflight
+                spec:
+                  restartPolicy: Never
+                  containers:
+                    - name: preflight
+                      image: compute-nest-registry.cn-hangzhou.cr.aliyuncs.com/public/ossutil:2.0
+                      resources:
+                        requests:
+                          cpu: '200m'
+                          memory: 256Mi
+                        limits:
+                          cpu: '1'
+                          memory: 1Gi
+                      command: ["/bin/bash", "-c", "--"]
+                      args:
+                        - |
+                          set -x
+                          CurlCli=$(echo ${CurlCli} | base64 -d)
+
+                          # 失败时把原因回传 ROS，用户在计算巢控制台能直接看到。
+                          # 注（实测）：ROS 会截断 StatusReason，所以必须把「排查指引」放在最前面、
+                          # 原始报错放在后面，否则用户只能看到一段 ossutil 原文而不知道该改什么。
+                          fail() {
+                            sleep 3
+                            echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1<br>" > /tmp/fail.log
+                            if [ -s /tmp/out.txt ]; then
+                              echo "原始报错：$(cat /tmp/out.txt)" >> /tmp/fail.log
+                            fi
+                            cat /tmp/fail.log >&2
+                            reason=$(cat /tmp/fail.log | tr '\n\t' ' ')
+                            eval "$CurlCli -d \"{\\\"reason\\\":\\\"$reason\\\",\\\"status\\\":\\\"FAILURE\\\"}\""
+                            exit 1
+                          }
+
+                          cat > /tmp/oss.cfg <<EOF
+                          [Credentials]
+                          endpoint = ${OssEndpoint}
+                          accessKeyID = ${AkId}
+                          accessKeySecret = ${AkSecret}
+                          region = ${RegionId}
+                          EOF
+
+                          # 1) Bucket 是否可访问（同时校验 AK 权限与同地域）
+                          if ! ossutil --config-file /tmp/oss.cfg ls oss://${BucketName}/ --limited-num 1 > /tmp/out.txt 2>&1; then
+                            fail "OSS 预检失败：无法访问 Bucket ${BucketName}。请检查 ① Bucket 名是否填写正确且已存在；② Bucket 是否与集群同地域（当前走内网域名 ${OssEndpoint}，跟地域不同的 Bucket 连不上）；③ AccessKey 是否对该 Bucket 有 oss:* 权限。"
+                          fi
+
+                          # 2) 两个必需前缀是否存在（ossfs 挂子目录时目录不存在会挂载失败）
+                          for prefix in dataset models; do
+                            if ! ossutil --config-file /tmp/oss.cfg ls oss://${BucketName}/$prefix/ > /tmp/out.txt 2>&1; then
+                              fail "OSS 预检失败：前缀 $prefix/ 不可访问。请确认 Bucket ${BucketName} 下存在 $prefix/ 目录，且 AccessKey 对其有读权限。"
+                            fi
+                          done
+
+                          # 3) 提示数据准备情况（不作为失败条件）。
+                          # 注（实测）：reason 不会进 WaitCondition 的 Data 属性，必须额外给 data 字段，
+                          # 才能用 Fn::GetAtt 取出来做 Output（形式为 {"1": "..."}）。
+                          n_video=$(ossutil --config-file /tmp/oss.cfg ls oss://${BucketName}/dataset/ 2>/dev/null | grep -c 'oss://' || true)
+                          n_model=$(ossutil --config-file /tmp/oss.cfg ls oss://${BucketName}/models/ 2>/dev/null | grep -c 'oss://' || true)
+                          summary="OSS 预检通过：Bucket ${BucketName} 可读写，dataset/ 当前 $n_video 个对象，models/ 当前 $n_model 个对象"
+                          eval "$CurlCli -d \"{\\\"reason\\\":\\\"$summary\\\",\\\"data\\\":\\\"$summary\\\",\\\"status\\\":\\\"SUCCESS\\\"}\""
+          - BucketName:
+              Fn::If:
+                - CreateNewOSSCondition
+                - Fn::GetAtt:
+                    - OssBucket
+                    - Name
+                - Ref: ExistingOSSBucket
+            AkId:
+              Fn::If:
+                - CreateNewRamCondition
+                - Fn::GetAtt:
+                    - OssAccessKey
+                    - AccessKeyId
+                - Ref: AccessKeyId
+            AkSecret:
+              Fn::If:
+                - CreateNewRamCondition
+                - Fn::GetAtt:
+                    - OssAccessKey
+                    - AccessKeySecret
+                - Ref: AccessKeySecret
+            RegionId:
+              Ref: ALIYUN::Region
+            OssEndpoint:
+              Fn::Sub: 'oss-${ALIYUN::Region}-internal.aliyuncs.com'
+            CurlCli:
+              Fn::Replace:
+                - "\n": ''
+                - Fn::Base64Encode:
+                    Fn::GetAtt:
+                      - OssPreflightWaitConditionHandle
+                      - CurlCli
+  OssPreflightWaitCondition:
+    Type: ALIYUN::ROS::WaitCondition
+    DependsOn: OssPreflightApplication
+    Properties:
+      Count: 1
+      Handle:
+        Ref: OssPreflightWaitConditionHandle
+      Timeout: 900
+  # 通用型 NAS：按量付费、全地域全可用区可用，作为默认的 RWX 输出卷
+  NasFileSystem:
+    Type: ALIYUN::NAS::FileSystem
+    Properties:
+      FileSystemType: standard
+      ProtocolType: NFS
+      StorageType: Performance
+      ChargeType: PayAsYouGo
+      VpcId:
+        Fn::GetAtt:
+          - VpcModule
+          - VpcId
+      VSwitchId:
+        Fn::GetAtt:
+          - VpcModule
+          - VSwitchId
+      # 不指定 ZoneId：NAS 开服可用区与 GPU 可用区并不一致（如北京 NAS 不支持 f 区），
+      # 绑定主可用区会报 InvaildZone.NotExist；交给 NAS 自选支持的可用区最稳。
+      Description:
+        Fn::Sub: '${ALIYUN::StackName}-robot-output'
+      # 写死 true：本模板会预建 dataset/ 与 models/ 目录，Bucket 永远非空，
+      # 若为 false 则实例永远删不掉。删除实例前请自行备份需要保留的数据。
+      DeletionForce: true
+  NasMountTarget:
+    Type: ALIYUN::NAS::MountTarget
+    Properties:
+      FileSystemId:
+        Fn::GetAtt:
+          - NasFileSystem
+          - FileSystemId
+      AccessGroupName: DEFAULT_VPC_GROUP_NAME
+      NetworkType: Vpc
+      VpcId:
+        Fn::GetAtt:
+          - VpcModule
+          - VpcId
+      VSwitchId:
+        Fn::GetAtt:
+          - VpcModule
+          - VSwitchId
+  # 用 MODULE::ACS::ComputeNest::FluxOciHelmDeploy 而不是 ALIYUN::CS::ClusterHelmApplication（实测必须）：
+  # 计算巢 HelmChart 部署物的占位符会解析成 oci://compute-nest-chart-registry.<region>.cr.aliyuncs.com/...，
+  # 而 ClusterHelmApplication.ChartUrl 的约束是 ^(http|https)://，传 oci:// 会在创建服务实例时报
+  # “does not match pattern” 而直接失败。FluxOciHelmDeploy 模块只收 oci 地址，正好匹配，
+  # 并用 DockerConfigJson 占位符拿到 chart registry 的拉取凭证。
+  ArgoWorkflowsApplication:
+    Type: MODULE::ACS::ComputeNest::FluxOciHelmDeploy
+    Version: v1
+    DependsOn:
+      - AddonReadySleep
+    Properties:
+      ClusterId:
+        Fn::GetAtt:
+          - AckCluster
+          - ClusterId
+      # 写死计算巢 HelmChart 部署物占位符：部署时解析为 oci:// 地址。用户填成别的
+      # （例如 GitHub 直链）只会失败——国内地域集群从 GitHub 拉 chart 实测 30 分钟超时。
+      HelmChartUrl: '{{ computenest::helmchart::argo-workflows }}'
+      DockerConfigJson: '{{ computenest::helm::dockerconfigjson }}'
+      ReleaseName: argo-workflows
+      Namespace: argo
+      ChartValues:
+        crds:
+          # 必须关闭 full CRD（实测的硬阻塞）：crds.full=true 时 Chart 会跑一个 pre-install
+          # 钩子 Job，镜像是 registry.k8s.io/kubectl（Google 域，阿里云 VPC 内 i/o timeout，
+          # Pod 卡在 ImagePullBackOff），并且还要从 GitHub 再下载一次 CRD YAML。
+          # full=false 改用 Chart 内置的精简 CRD，由 Helm 直接 apply，不起钩子 Job。
+          # Argo 自身镜像在 quay.io，实测国内可拉取（~13s），无需换源。
+          # 实测验证：加上本项后 argo-workflows-workflow-controller 40 秒内 1/1 Running。
+          full: false
+        controller:
+          workflowNamespaces:
+            - robot-demo
+        server:
+          authModes:
+            - server
+      # 把“chart 拉取/安装失败”在部署阶段就暴露，避免“部署成功但 Argo 不存在”。
+      # 注：该模块的 JsonPath 用 $ 开头的 JSONPath 写法（与 ClusterApplication 不同）。
+      WaitUntil:
+        - Kind: Deployment
+          Name: argo-workflows-workflow-controller
+          Namespace: argo
+          JsonPath: $.status.availableReplicas
+          Operator: NotEmpty
+          FirstMatch: true
+          Timeout: 900
+  FluidApplication:
+    Type: MODULE::ACS::ComputeNest::FluxOciHelmDeploy
+    Version: v1
+    DependsOn:
+      - AddonReadySleep
+    Properties:
+      ClusterId:
+        Fn::GetAtt:
+          - AckCluster
+          - ClusterId
+      HelmChartUrl: '{{ computenest::helmchart::fluid }}'
+      DockerConfigJson: '{{ computenest::helm::dockerconfigjson }}'
+      ReleaseName: ack-fluid
+      Namespace: fluid-system
+      # 重要（实测）：这里用的是 ACK 发行的 ack-fluid chart，不能用社区版 fluid chart。
+      # 1) 社区版 fluid ≥ 1.0.0 的 templates/webhook/plugins-profile.yaml 用了 Helm 的 lookup 函数，
+      #    计算巢/ACK 侧的 Helm 渲染器不支持，直接报
+      #    “parse error at (fluid/templates/webhook/plugins-profile.yaml:12): function "lookup" not defined”，
+      #    与 chart 托管在哪里、镜像换不换源都无关（是 parse 阶段就失败）。
+      # 2) 社区版 0.9.x 虽能渲染，但镜像在 docker.io/fluidcloudnative，集群内实测 i/o timeout。
+      # 3) ack-fluid ≤ 1.0.4 不含 lookup，且镜像全部是 acs/* 由 region 拼前缀，走阿里云内网。
+      #    只需下面两个 values，不需要逐组件覆盖 imagePrefix。
+      ChartValues:
+        # chart 默认值是占位符 __ACK_REGION_ID__（控制台安装时才会替换），编排安装必须显式传入
+        region:
+          Ref: ALIYUN::Region
+        # 拼成 registry-vpc.<region>.aliyuncs.com/acs/...，节点无需公网即可拉取
+        pullImageByVPCNetwork: true
+      # 实测：ack-fluid 1.0.4 安装后约 90 秒内 dataset-controller / fluid-webhook / csi-nodeplugin 全部 Running
+      WaitUntil:
+        - Kind: Deployment
+          Name: dataset-controller
+          Namespace: fluid-system
+          JsonPath: $.status.availableReplicas
+          Operator: NotEmpty
+          FirstMatch: true
+          Timeout: 900
+  # 方案基础资源：命名空间、OSS 凭证、只读输入卷（dataset / models）、Demo 所需 RBAC
+  SolutionBaseApplication:
+    Type: ALIYUN::CS::ClusterApplication
+    DependsOn:
+      - AddonReadySleep
+      - OssDatasetDirectory
+      - OssModelsDirectory
+      # 只读卷等 OSS 预检通过再建：避开“PVC 悬在 Pending、看不到原因”的谜式失败
+      - OssPreflightWaitCondition
+    Properties:
+      ClusterId:
+        Fn::GetAtt:
+          - AckCluster
+          - ClusterId
+      DefaultNamespace: robot-demo
+      # Apply 语义（类似 kubectl apply）：对象已存在时更新而不是报 409 Conflict。
+      # 本栈有多个 ClusterApplication 共用 robot-demo 命名空间，且部署失败重试 /
+      # 实例修改时会重复下发同一批对象，必须用 Apply 才能幂等。
+      CreationMode: Apply
+      # RolePolicy 保持默认 EnsureAdminRoleAndBinding（实测结论，勿改成 None）：
+      # ROS 会为部署身份创建 ros:application-admin ClusterRole/Binding，WaitUntil 读取
+      # CRD、Deployment 等集群资源全靠它。改成 None 会报 403
+      # “User \"<uid>\" cannot get resource customresourcedefinitions at the cluster scope”。
+      # 曾见到的 “RAM policy Forbidden for action cs:DescribeUserPermission” 不是模板问题，
+      # 而是用服务商（supplier）账号去创建服务实例造成的——该 RAM 用户没有此权限；
+      # 正确的部署身份是消费者账号，实测消费者账号可正常调用该接口。
+      RolePolicy: EnsureAdminRoleAndBinding
+      YamlContent:
+        Fn::Sub:
+          - |
+            # 不要在此声明 Namespace：ClusterApplication 的 DefaultNamespace 已自动创建，
+            # 重复声明会报 namespaces "robot-demo" already exists（409 Conflict）。
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: oss-secret
+              namespace: ${Namespace}
+            type: Opaque
+            stringData:
+              akId: '${AkId}'
+              akSecret: '${AkSecret}'
+            ---
+            apiVersion: v1
+            kind: PersistentVolume
+            metadata:
+              name: robot-dataset
+              labels:
+                alicloud-pvname: robot-dataset
+            spec:
+              capacity:
+                storage: 100Gi
+              accessModes:
+                - ReadWriteMany
+              persistentVolumeReclaimPolicy: Retain
+              # 两个 OSS 卷用 RWX 而不是 ROX：运维控制台要把模型权重与样例视频写进来
+              # （ossfs 支持写）。设成 ROX 时物料拉取脚本会 Permission denied。
+              csi:
+                driver: ossplugin.csi.alibabacloud.com
+                volumeHandle: robot-dataset
+                nodePublishSecretRef:
+                  name: oss-secret
+                  namespace: ${Namespace}
+                volumeAttributes:
+                  bucket: '${Bucket}'
+                  url: '${OssEndpoint}'
+                  path: /dataset/
+                  otherOpts: '-o umask=022 -o max_stat_cache_size=0 -o allow_other'
+            ---
+            apiVersion: v1
+            kind: PersistentVolumeClaim
+            metadata:
+              name: robot-dataset
+              namespace: ${Namespace}
+            spec:
+              accessModes:
+                - ReadWriteMany
+              resources:
+                requests:
+                  storage: 100Gi
+              selector:
+                matchLabels:
+                  alicloud-pvname: robot-dataset
+            ---
+            apiVersion: v1
+            kind: PersistentVolume
+            metadata:
+              name: robot-models
+              labels:
+                alicloud-pvname: robot-models
+            spec:
+              capacity:
+                storage: 100Gi
+              accessModes:
+                - ReadWriteMany
+              persistentVolumeReclaimPolicy: Retain
+              # 两个 OSS 卷用 RWX 而不是 ROX：运维控制台要把模型权重与样例视频写进来
+              # （ossfs 支持写）。设成 ROX 时物料拉取脚本会 Permission denied。
+              csi:
+                driver: ossplugin.csi.alibabacloud.com
+                volumeHandle: robot-models
+                nodePublishSecretRef:
+                  name: oss-secret
+                  namespace: ${Namespace}
+                volumeAttributes:
+                  bucket: '${Bucket}'
+                  url: '${OssEndpoint}'
+                  path: /models/
+                  otherOpts: '-o umask=022 -o max_stat_cache_size=0 -o allow_other'
+            ---
+            apiVersion: v1
+            kind: PersistentVolumeClaim
+            metadata:
+              name: robot-models
+              namespace: ${Namespace}
+            spec:
+              accessModes:
+                - ReadWriteMany
+              resources:
+                requests:
+                  storage: 100Gi
+              selector:
+                matchLabels:
+                  alicloud-pvname: robot-models
+            ---
+            # Argo executor 的 wait sidecar 需要 get/patch pods 才能标记步骤完成
+            apiVersion: rbac.authorization.k8s.io/v1
+            kind: Role
+            metadata:
+              name: argo-workflow-executor
+              namespace: ${Namespace}
+            rules:
+              - apiGroups: [""]
+                resources: ["pods"]
+                verbs: ["get", "patch"]
+              - apiGroups: [""]
+                resources: ["pods/log", "configmaps"]
+                verbs: ["get", "list", "watch"]
+            ---
+            apiVersion: rbac.authorization.k8s.io/v1
+            kind: RoleBinding
+            metadata:
+              name: argo-workflow-executor
+              namespace: ${Namespace}
+            subjects:
+              - kind: ServiceAccount
+                name: default
+                namespace: ${Namespace}
+            roleRef:
+              kind: Role
+              name: argo-workflow-executor
+              apiGroup: rbac.authorization.k8s.io
+            ---
+            # Argo 通过 resource 模板创建 RayJob，需要 ray.io 的操作权限
+            apiVersion: rbac.authorization.k8s.io/v1
+            kind: ClusterRole
+            metadata:
+              name: robot-demo-rayjob
+            rules:
+              - apiGroups: ["ray.io"]
+                resources: ["rayjobs", "rayjobs/status", "rayclusters", "rayclusters/status"]
+                verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+              # Argo 3.5+ executor 上报节点结果的首选通道；缺失时会降级到已废弃的
+              # legacy pod patch 并持续刷 warning
+              - apiGroups: ["argoproj.io"]
+                resources: ["workflowtaskresults"]
+                verbs: ["create", "patch"]
+            ---
+            apiVersion: rbac.authorization.k8s.io/v1
+            kind: ClusterRoleBinding
+            metadata:
+              name: robot-demo-rayjob
+            subjects:
+              - kind: ServiceAccount
+                name: default
+                namespace: ${Namespace}
+              - kind: ServiceAccount
+                name: argo-workflows-workflow-controller
+                namespace: argo
+              - kind: ServiceAccount
+                name: argo-workflows-server
+                namespace: argo
+            roleRef:
+              kind: ClusterRole
+              name: robot-demo-rayjob
+              apiGroup: rbac.authorization.k8s.io
+          - Namespace: robot-demo
+            # Bucket 与 AK 都按选项解析：新建/已有 Bucket、自动新建/自备 AK
+            Bucket:
+              Fn::If:
+                - CreateNewOSSCondition
+                - Fn::GetAtt:
+                    - OssBucket
+                    - Name
+                - Ref: ExistingOSSBucket
+            AkId:
+              Fn::If:
+                - CreateNewRamCondition
+                - Fn::GetAtt:
+                    - OssAccessKey
+                    - AccessKeyId
+                - Ref: AccessKeyId
+            AkSecret:
+              Fn::If:
+                - CreateNewRamCondition
+                - Fn::GetAtt:
+                    - OssAccessKey
+                    - AccessKeySecret
+                - Ref: AccessKeySecret
+            OssEndpoint:
+              Fn::Sub: 'oss-${ALIYUN::Region}-internal.aliyuncs.com'
+  # 共享读写输出卷：CPFS 通用版走 NFS 协议服务，CPFS 智算版走 bmcpfs VPC 挂载
+  SharedOutputVolumeApplication:
+    Type: ALIYUN::CS::ClusterApplication
+    DependsOn:
+      - SolutionBaseApplication
+    Properties:
+      ClusterId:
+        Fn::GetAtt:
+          - AckCluster
+          - ClusterId
+      DefaultNamespace: robot-demo
+      CreationMode: Apply
+      # RolePolicy 保持默认 EnsureAdminRoleAndBinding（实测结论，勿改成 None）：
+      # ROS 会为部署身份创建 ros:application-admin ClusterRole/Binding，WaitUntil 读取
+      # CRD、Deployment 等集群资源全靠它。改成 None 会报 403
+      # “User \"<uid>\" cannot get resource customresourcedefinitions at the cluster scope”。
+      # 曾见到的 “RAM policy Forbidden for action cs:DescribeUserPermission” 不是模板问题，
+      # 而是用服务商（supplier）账号去创建服务实例造成的——该 RAM 用户没有此权限；
+      # 正确的部署身份是消费者账号，实测消费者账号可正常调用该接口。
+      RolePolicy: EnsureAdminRoleAndBinding
+      YamlContent:
+        Fn::Sub:
+          - |
+            apiVersion: v1
+            kind: PersistentVolume
+            metadata:
+              name: robot-output
+              labels:
+                alicloud-pvname: robot-output
+            spec:
+              capacity:
+                storage: 100Gi
+              accessModes:
+                - ReadWriteMany
+              persistentVolumeReclaimPolicy: Retain
+              csi:
+                driver: nasplugin.csi.alibabacloud.com
+                volumeHandle: robot-output
+                volumeAttributes:
+                  server: '${MountDomain}'
+                  path: /
+              mountOptions:
+                - nolock,tcp,noresvport
+                - vers=3
+            ---
+            apiVersion: v1
+            kind: PersistentVolumeClaim
+            metadata:
+              name: robot-output
+              namespace: robot-demo
+            spec:
+              accessModes:
+                - ReadWriteMany
+              resources:
+                requests:
+                  storage: 100Gi
+              selector:
+                matchLabels:
+                  alicloud-pvname: robot-output
+          - MountDomain:
+              Fn::GetAtt:
+                - NasMountTarget
+                - MountTargetDomain
+  # Demo 清单以 ConfigMap 形式下发，不自动提交：
+  # 两个 Demo 都需要 GPU 节点在位，且 VLA 流水线还需要先上传模型权重与视频数据。
+  # Demo 清单只下发 ConfigMap 与 RBAC，不会自动提交任务，因此始终下发
+  DemoManifestsApplication:
+    Type: ALIYUN::CS::ClusterApplication
+    DependsOn:
+      - SolutionBaseApplication
+    Properties:
+      ClusterId:
+        Fn::GetAtt:
+          - AckCluster
+          - ClusterId
+      DefaultNamespace: robot-demo
+      CreationMode: Apply
+      # RolePolicy 保持默认 EnsureAdminRoleAndBinding（实测结论，勿改成 None）：
+      # ROS 会为部署身份创建 ros:application-admin ClusterRole/Binding，WaitUntil 读取
+      # CRD、Deployment 等集群资源全靠它。改成 None 会报 403
+      # “User \"<uid>\" cannot get resource customresourcedefinitions at the cluster scope”。
+      # 曾见到的 “RAM policy Forbidden for action cs:DescribeUserPermission” 不是模板问题，
+      # 而是用服务商（supplier）账号去创建服务实例造成的——该 RAM 用户没有此权限；
+      # 正确的部署身份是消费者账号，实测消费者账号可正常调用该接口。
+      RolePolicy: EnsureAdminRoleAndBinding
+      YamlContent:
+        Fn::Sub:
+          - |
+            apiVersion: v1
+            kind: ConfigMap
+            metadata:
+              name: demo-manifests
+              namespace: robot-demo
+            data:
+              01-gpu-check.yaml: |
+                # Demo A：GPU 环境自检（单 Pod）
+                apiVersion: v1
+                kind: Pod
+                metadata:
+                  name: gpu-check
+                  namespace: robot-demo
+                spec:
+                  restartPolicy: Never
+                  ${ImagePullSecretLine}
+                  tolerations:
+                    - key: nvidia.com/gpu
+                      operator: Exists
+                      effect: NoSchedule
+                  containers:
+                    - name: check
+                      image: ${DemoImage}
+                      command: ["/bin/bash", "-c"]
+                      args:
+                        - |
+                          echo "===== nvidia-smi ====="; nvidia-smi || true
+                          echo "===== torch ====="; python -c "import torch;print('torch',torch.__version__,'cuda',torch.cuda.is_available(),'count',torch.cuda.device_count())" || true
+                          echo "===== data_juicer ops ====="; python -c "from data_juicer.ops.mapper import VideoExtractFramesMapper, ExportToLeRobotMapper; print('data_juicer ops import OK')" || true
+                          echo "===== mounted volumes ====="; ls /data/dataset /data/models 2>&1 || true
+                      resources:
+                        limits:
+                          nvidia.com/gpu: "1"
+                        requests:
+                          nvidia.com/gpu: "1"
+                      volumeMounts:
+                        - { name: dataset, mountPath: /data/dataset }
+                        - { name: models, mountPath: /data/models }
+                  # 只挂载恒存在的两个只读卷；robot-output 仅当共享存储不为 None 时存在，由 Demo B 使用
+                  volumes:
+                    - name: dataset
+                      persistentVolumeClaim: { claimName: robot-dataset }
+                    - name: models
+                      persistentVolumeClaim: { claimName: robot-models }
+              02-vla-argo-workflow.yaml: |
+                # Demo B：两阶段 VLA 数据流水线（Argo DAG：GPU RayJob -> CPU 后处理）
+                # 提交前请先创建脚本 ConfigMap：
+                #   kubectl -n robot-demo create cm vla-pipeline-script \
+                #     --from-file=demo/vla_gpu_pipeline.py \
+                #     --from-file=demo/vla_cpu_postprocess.py
+                apiVersion: argoproj.io/v1alpha1
+                kind: Workflow
+                metadata:
+                  generateName: vla-pipeline-
+                  namespace: robot-demo
+                spec:
+                  entrypoint: vla-dag
+                  serviceAccountName: default
+                  ${ImagePullSecretLine}
+                  volumes:
+                    - name: dataset
+                      persistentVolumeClaim: { claimName: robot-dataset }
+                    - name: models
+                      persistentVolumeClaim: { claimName: robot-models }
+                    - name: output
+                      persistentVolumeClaim: { claimName: robot-output }
+                    - name: scripts
+                      configMap: { name: vla-pipeline-script }
+                  templates:
+                    - name: vla-dag
+                      dag:
+                        tasks:
+                          - name: gpu-pipeline
+                            template: gpu-pipeline-rayjob
+                          - name: cpu-postprocess
+                            template: cpu-postprocess-pod
+                            dependencies: [gpu-pipeline]
+                    - name: gpu-pipeline-rayjob
+                      resource:
+                        action: create
+                        # 实测必需：不设时删掉 Workflow 不会回收 RayJob/RayCluster，GPU 一直被占
+                        setOwnerReference: true
+                        successCondition: status.jobDeploymentStatus == Complete
+                        failureCondition: status.jobDeploymentStatus == Failed
+                        manifest: |
+                          apiVersion: ray.io/v1
+                          kind: RayJob
+                          metadata:
+                            # 实测必需：固定名字会让第二次提交报
+                            # "rayjobs.ray.io \"xxx\" already exists"，跟随 Workflow 名即可
+                            name: '{{workflow.name}}-rayjob'
+                            namespace: robot-demo
+                          spec:
+                            shutdownAfterJobFinishes: true
+                            activeDeadlineSeconds: 7200
+                            entrypoint: "python /scripts/vla_gpu_pipeline.py"
+                            runtimeEnvYAML: >-
+                              {"env_vars":{"HF_ENDPOINT":"https://hf-mirror.com","PYTHONUNBUFFERED":"1"}}
+                            submitterPodTemplate:
+                              spec:
+                                restartPolicy: Never
+                                ${ImagePullSecretLine}
+                                containers:
+                                  - name: ray-job-submitter
+                                    image: ${DemoImage}
+                                    resources:
+                                      limits: { cpu: "1", memory: "2Gi" }
+                            rayClusterSpec:
+                              rayVersion: "2.40.0"
+                              headGroupSpec:
+                                rayStartParams:
+                                  dashboard-host: "0.0.0.0"
+                                  # head 无卡，显式钉死 0：否则 Ray 会自动探测并上报“幻影 GPU”，
+                                  # 导致 GPU actor 被调度到无卡的 head 上而永远跑不起来
+                                  num-gpus: "0"
+                                template:
+                                  spec:
+                                    ${ImagePullSecretLine}
+                                    containers:
+                                      - name: ray-head
+                                        image: ${DemoImage}
+                                        env:
+                                          - { name: PYTHONUNBUFFERED, value: "1" }
+                                          # 与上方 num-gpus=0 双保险：置空可见设备，断掉 Ray 自动探测的幻影 GPU
+                                          - { name: CUDA_VISIBLE_DEVICES, value: "" }
+                                        resources:
+                                          # 实测必需：requests 不能超过管控节点的**整机可分配量**。
+                                          # 默认管控规格 4c16g 实际可分配约 3920m/14.7Gi，若 requests 写 4c16g
+                                          # 则 head 永远 Pending（且 Workflow 一直显示 Running、不报错，极难发现）。
+                                          limits: { cpu: "4", memory: "16Gi" }
+                                          requests: { cpu: "2", memory: "8Gi" }
+                                        volumeMounts:
+                                          - { name: models, mountPath: /data/models }
+                                          - { name: dataset, mountPath: /data/dataset }
+                                          - { name: output, mountPath: /data/output }
+                                          - { name: scripts, mountPath: /scripts }
+                                    volumes:
+                                      - name: models
+                                        persistentVolumeClaim: { claimName: robot-models }
+                                      - name: dataset
+                                        persistentVolumeClaim: { claimName: robot-dataset }
+                                      - name: output
+                                        persistentVolumeClaim: { claimName: robot-output }
+                                      - name: scripts
+                                        configMap: { name: vla-pipeline-script }
+                              workerGroupSpecs:
+                                - groupName: gpu-worker
+                                  replicas: ${GpuWorkerReplicas}
+                                  minReplicas: ${GpuWorkerReplicas}
+                                  maxReplicas: ${GpuWorkerReplicas}
+                                  rayStartParams: {}
+                                  template:
+                                    spec:
+                                      ${ImagePullSecretLine}
+                                      tolerations:
+                                        - key: nvidia.com/gpu
+                                          operator: Exists
+                                          effect: NoSchedule
+                                      containers:
+                                        - name: ray-worker
+                                          image: ${DemoImage}
+                                          env:
+                                            - { name: HF_ENDPOINT, value: "https://hf-mirror.com" }
+                                            - { name: PYTHONUNBUFFERED, value: "1" }
+                                          resources:
+                                            # GPU worker 跑在 GPU 节点上（默认 gn8is.4xlarge = 16c128g，
+                                            # 可分配约 15890m），limits 16c 会超过可分配量，因此封顶 12c
+                                            limits:
+                                              nvidia.com/gpu: "1"
+                                              cpu: "12"
+                                              memory: "64Gi"
+                                            requests:
+                                              nvidia.com/gpu: "1"
+                                              cpu: "4"
+                                              memory: "16Gi"
+                                          volumeMounts:
+                                            - { name: models, mountPath: /data/models }
+                                            - { name: dataset, mountPath: /data/dataset }
+                                            - { name: output, mountPath: /data/output }
+                                            - { name: scripts, mountPath: /scripts }
+                                      volumes:
+                                        - name: models
+                                          persistentVolumeClaim: { claimName: robot-models }
+                                        - name: dataset
+                                          persistentVolumeClaim: { claimName: robot-dataset }
+                                        - name: output
+                                          persistentVolumeClaim: { claimName: robot-output }
+                                        - name: scripts
+                                          configMap: { name: vla-pipeline-script }
+                    - name: cpu-postprocess-pod
+                      container:
+                        image: ${DemoImage}
+                        command: ["python", "/scripts/vla_cpu_postprocess.py"]
+                        env:
+                          - { name: PYTHONUNBUFFERED, value: "1" }
+                        resources:
+                          # 同 head：requests 不能超过管控节点整机可分配量（4c16g 规格约 3920m/14.7Gi），
+                          # 否则后处理 Pod 一直 Pending
+                          limits: { cpu: "8", memory: "16Gi" }
+                          requests: { cpu: "2", memory: "8Gi" }
+                        volumeMounts:
+                          - { name: output, mountPath: /data/output }
+                          - { name: dataset, mountPath: /data/dataset }
+                          - { name: scripts, mountPath: /scripts }
+          - # VLA 流水线镜像：用计算巢公开镜像，用户无需自备（与内部实现仓库
+            # computenest-robot-solution/datajuicer 保持一致）。
+            # 注：固定版本 tag，不用 :latest——配合 imagePullPolicy: IfNotPresent 时，
+            # 可变 tag 会让部分节点残留旧镜像，表现为 MegaSaM 静默输出为空。
+            DemoImage: compute-nest-registry.cn-hangzhou.cr.aliyuncs.com/public/vla-pipeline:torch2.7.0-cu128-20260729
+            # 写死 1：流水线 Stage 2/3 各占 0.5 卡、共居同一张物理 GPU，**单卡即可跑通全链路**，
+            # 多给只会空跑。需要扩并行时用户提交前自行改清单即可。
+            GpuWorkerReplicas: 1
+            # 私有仓库时：先 kubectl create secret docker-registry demo-registry ...，
+            # 再把下面这行改成 imagePullSecrets: [{name: demo-registry}]
+            ImagePullSecretLine: 'imagePullSecrets: []'
+  # 运维控制台：集群内的一个常驻“操作终端”，挂好三个卷与物料脚本，
+  # 用户 kubectl exec 进去一条命令就能拉齐 3.27GB 模型权重与样例视频，无需自备任何数据。
+  #
+  # 注（关键）：本资源的 YamlContent **不用 Fn::Sub**。拉取脚本大量使用 shell 的
+  # ${VAR} / ${ARR[@]} 写法，一旦过 Fn::Sub 会被当成未绑定占位符而直接报错；
+  # 因此地域改为运行时从 ECS 元数据服务探测，整段 YAML 保持纯文本。
+  VlaOpsConsoleApplication:
+    Type: ALIYUN::CS::ClusterApplication
+    DependsOn:
+      - SolutionBaseApplication
+      - SharedOutputVolumeApplication
+    Properties:
+      ClusterId:
+        Fn::GetAtt:
+          - AckCluster
+          - ClusterId
+      DefaultNamespace: robot-demo
+      CreationMode: Apply
+      RolePolicy: EnsureAdminRoleAndBinding
+      YamlContent: |
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: vla-ops
+          namespace: robot-demo
+        ---
+        # 控制台自身权限：提交/清理 Workflow + 只读排查，不含集群级写权限
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: Role
+        metadata:
+          name: vla-ops
+          namespace: robot-demo
+        rules:
+          - apiGroups: ["argoproj.io"]
+            resources: ["workflows", "workflowtemplates"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+          - apiGroups: ["ray.io"]
+            resources: ["rayjobs", "rayclusters"]
+            verbs: ["get", "list", "watch", "delete"]
+          - apiGroups: [""]
+            resources: ["pods", "pods/log", "persistentvolumeclaims", "configmaps", "events", "services"]
+            verbs: ["get", "list", "watch"]
+        ---
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: vla-ops
+          namespace: robot-demo
+        subjects:
+          - kind: ServiceAccount
+            name: vla-ops
+            namespace: robot-demo
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: Role
+          name: vla-ops
+        ---
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: vla-materials
+          namespace: robot-demo
+        data:
+          prepare-data.sh: |
+            #!/bin/bash
+            # 拉取 VLA 流水线物料（模型权重 + 样例视频）并校验。
+            # 物料托管在计算巢公开 bucket computenest-artifacts-<region>/embodied-ai/，
+            # 已验证 cn-beijing / cn-shanghai / cn-hangzhou 均有镜像。
+            # 用法: bash /materials/prepare-data.sh [--check-only] [--public] [--region <r>]
+            set -uo pipefail
+            CHECK_ONLY=0; USE_PUBLIC=0; REGION=""
+            while [ $# -gt 0 ]; do
+              case "$1" in
+                --check-only) CHECK_ONLY=1; shift ;;
+                --public)     USE_PUBLIC=1; shift ;;
+                --region)     REGION="$2"; shift 2 ;;
+                *) echo "未知参数: $1"; exit 2 ;;
+              esac
+            done
+            # 地域：未指定时从 ECS 元数据服务探测，探不到回退 cn-hangzhou
+            if [ -z "$REGION" ]; then
+              REGION=$(curl -s --max-time 3 http://100.100.100.200/latest/meta-data/region-id || true)
+              [ -z "$REGION" ] && REGION=cn-hangzhou
+            fi
+            if [ "$USE_PUBLIC" = "1" ]; then
+              OSS_HOST="computenest-artifacts-$REGION.oss-$REGION.aliyuncs.com"
+            else
+              OSS_HOST="computenest-artifacts-$REGION.oss-$REGION-internal.aliyuncs.com"
+            fi
+            OSS_BASE="https://$OSS_HOST/embodied-ai"
+            MODELS_DIR=/data/models
+            DATASET_DIR=/data/dataset
+            echo "============================================================="
+            echo " VLA 物料准备 | 地域=$REGION | 端点=$OSS_HOST"
+            [ "$CHECK_ONLY" = "1" ] && echo " 模式: CHECK-ONLY（只校验不下载）"
+            echo "============================================================="
+            fetch() {
+              name="$1"; size="$2"; root="$3"; probe="$4"
+              if [ -f "$root/$probe" ]; then
+                echo "  ⏭  $name 已存在，跳过"
+                return 0
+              fi
+              if [ "$CHECK_ONLY" = "1" ]; then
+                echo "  ❌ $name 缺失（check-only 不下载）"
+                return 1
+              fi
+              echo "  ⬇  $name（$size）流式解包到 $root ..."
+              mkdir -p "$root"
+              if curl -fL --retry 3 --retry-delay 5 "$OSS_BASE/$name" | tar -xzf - -C "$root"; then
+                echo "  ✔ $name 完成"
+                return 0
+              fi
+              echo "  ❌ $name 下载或解包失败"
+              return 1
+            }
+            FAIL=0
+            echo "▶ 拉取物料"
+            fetch hawor.tar.gz   3.1GB "$MODELS_DIR"  hawor/hawor.ckpt                              || FAIL=1
+            fetch mano.tar.gz    165MB "$MODELS_DIR"  mano/MANO_RIGHT.pkl                           || FAIL=1
+            fetch dataset.tar.gz 12MB  "$DATASET_DIR" ego_hand_action_annotation/data/1018.mp4      || FAIL=1
+            echo
+            echo "▶ 校验最终布局"
+            OK=0; MISS=0
+            for f in "$MODELS_DIR/hawor/hawor.ckpt" "$MODELS_DIR/hawor/model_config.yaml" \
+                     "$MODELS_DIR/hawor/detector.pt" "$MODELS_DIR/mano/MANO_RIGHT.pkl" \
+                     "$MODELS_DIR/mano/MANO_LEFT.pkl" \
+                     "$DATASET_DIR/ego_hand_action_annotation/data/1018.mp4"; do
+              printf '  %-58s ' "$(basename $f)"
+              if [ -f "$f" ]; then
+                echo "✅ $(du -h $f 2>/dev/null | cut -f1)"
+                OK=$((OK+1))
+              else
+                echo "❌ 缺失"
+                MISS=$((MISS+1))
+              fi
+            done
+            echo
+            echo " 结果：就位 $OK | 缺失 $MISS"
+            if [ "$MISS" -gt 0 ] || [ "$FAIL" = "1" ]; then
+              echo " ❗ 物料不齐。内网端点不通时试 --public；地域不对时试 --region <集群地域>。"
+              exit 1
+            fi
+            echo " ✅ 物料齐全，可以提交流水线了："
+            echo "     kubectl -n robot-demo get cm demo-manifests -o jsonpath='{.data.02-vla-pipeline\.yaml}' | kubectl apply -f -"
+        ---
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: vla-ops
+          namespace: robot-demo
+          labels: { app: vla-ops }
+        spec:
+          replicas: 1
+          strategy:
+            type: Recreate          # 独占 PVC，避开滚动更新时两个副本同时挂载
+          selector:
+            matchLabels: { app: vla-ops }
+          template:
+            metadata:
+              labels: { app: vla-ops }
+            spec:
+              serviceAccountName: vla-ops
+              containers:
+                - name: ops
+                  # 该公开镜像已内置 kubectl + ossutil
+                  image: compute-nest-registry.cn-hangzhou.cr.aliyuncs.com/public/ossutil:2.0
+                  imagePullPolicy: IfNotPresent
+                  command: ["/bin/bash", "-c"]
+                  args:
+                    - |
+                      echo "============================================="
+                      echo " VLA 运维控制台就绪"
+                      echo " 挂载点  : /data/models  /data/dataset  /data/output"
+                      echo " 物料脚本: /materials/prepare-data.sh"
+                      echo "============================================="
+                      echo " 进入: kubectl exec -it deploy/vla-ops -n robot-demo -- bash"
+                      echo " 备料: bash /materials/prepare-data.sh"
+                      echo "============================================="
+                      sleep infinity
+                  resources:
+                    requests: { cpu: "500m", memory: "1Gi" }
+                    limits: { cpu: "4", memory: "8Gi" }   # 解包 3GB tar 需要余量
+                  volumeMounts:
+                    - { name: models,    mountPath: /data/models }
+                    - { name: dataset,   mountPath: /data/dataset }
+                    - { name: output,    mountPath: /data/output }
+                    - { name: materials, mountPath: /materials, readOnly: true }
+              volumes:
+                - name: models
+                  persistentVolumeClaim: { claimName: robot-models }
+                - name: dataset
+                  persistentVolumeClaim: { claimName: robot-dataset }
+                - name: output
+                  persistentVolumeClaim: { claimName: robot-output }
+                - name: materials
+                  configMap:
+                    name: vla-materials
+                    defaultMode: 0755
+
+Outputs:
+  ClusterId:
+    Description:
+      en: ACK cluster ID
+      zh-cn: ACK 集群 ID
+    Value:
+      Fn::GetAtt:
+        - AckCluster
+        - ClusterId
+  ClusterConsoleUrl:
+    Description:
+      en: ACK cluster console URL
+      zh-cn: ACK 集群控制台地址
+    Value:
+      Fn::Sub:
+        - 'https://cs.console.aliyun.com/#/k8s/cluster/${ClusterId}/v2/info/overview'
+        - ClusterId:
+            Fn::GetAtt:
+              - AckCluster
+              - ClusterId
+  GpuNodePoolId:
+    Description:
+      en: GPU node pool ID (scale in or out here)
+      zh-cn: GPU 节点池 ID（在此扩容或缩容）
+    Value:
+      Fn::GetAtt:
+        - GpuNodePool
+        - NodePoolId
+  OssBucketName:
+    Description:
+      en: OSS bucket used by this instance (upload your videos and model weights here)
+      zh-cn: 本实例使用的 OSS Bucket（源视频与模型权重上传到这里）
+    Value:
+      Fn::If:
+        - CreateNewOSSCondition
+        - Fn::GetAtt:
+            - OssBucket
+            - Name
+        - Ref: ExistingOSSBucket
+  OssPreflightResult:
+    Description:
+      en: OSS preflight result (bucket reachable, required prefixes present, object counts)
+      zh-cn: OSS 预检结果（Bucket 可达、必需前缀存在、当前对象数）
+    Value:
+      Fn::GetAtt:
+        - OssPreflightWaitCondition
+        - Data
+  Step1PrepareMaterials:
+    Description:
+      en: 'Step 1 - enter the ops console and pull the materials (HaWoR 3.1GB + MANO 165MB + sample videos 12MB) from the ComputeNest public artifact bucket. Nothing to prepare on your side. Add --check-only to verify only.'
+      zh-cn: '第 1 步 - 进入运维控制台拉取物料（HaWoR 3.1GB + MANO 165MB + 样例视频 12MB，全部来自计算巢公开制品库，无需您自备）。只校验加 --check-only。'
+    Value: 'kubectl exec -it deploy/vla-ops -n robot-demo -- bash /materials/prepare-data.sh'
+  OssBucketForYourOwnData:
+    Description:
+      en: 'Optional - upload your own videos here to replace the sample dataset'
+      zh-cn: '可选 - 想换成自己的视频时，上传到这里即可（样例数据已由第 1 步自动备好）'
+    Value:
+      Fn::Sub:
+        - 'aliyun oss cp -r ./videos/ oss://${BucketName}/dataset/ --endpoint oss-${ALIYUN::Region}.aliyuncs.com'
+        - BucketName:
+            Fn::If:
+              - CreateNewOSSCondition
+              - Fn::GetAtt:
+                  - OssBucket
+                  - Name
+              - Ref: ExistingOSSBucket
+  Step2VerifyGpuNodes:
+    Description:
+      en: 'Step 2 - verify that GPU resources are reported by the nodes (expect nvidia.com/gpu)'
+      zh-cn: '第 2 步 - 验证节点已上报 GPU 资源（预期出现 nvidia.com/gpu）'
+    Value: 'kubectl get nodes -l robot-solution.aliyun.com/node-role=gpu -o jsonpath=''{range .items[*]}{.metadata.name}{"\t"}{.status.allocatable}{"\n"}{end}'''
+  Step3CreateScriptConfigMap:
+    Description:
+      en: 'Step 3 - create the pipeline script ConfigMap from the repository demo directory'
+      zh-cn: '第 3 步 - 用仓库 demo 目录下的脚本创建 ConfigMap'
+    Value: 'kubectl -n robot-demo create cm vla-pipeline-script --from-file=demo/vla_gpu_pipeline.py --from-file=demo/vla_cpu_postprocess.py'
+  Step4SubmitDemoA:
+    Description:
+      en: 'Step 4a - GPU self-check (about 1 minute once the image is cached; the first pull of the VLA image takes around 10 minutes). The pipeline image is already baked in, nothing to replace.'
+      zh-cn: '第 4a 步 - GPU 环境自检（镜像已缓存时约 1 分钟；首次拉 VLA 镜像约 10 分钟）。流水线镜像已内置，无需替换。'
+    Value: 'kubectl -n robot-demo get cm demo-manifests -o jsonpath=''{.data.01-gpu-check\.yaml}'' | kubectl apply -f -'
+  Step4SubmitDemoB:
+    Description:
+      en: 'Step 4b - submit the two-stage VLA pipeline. Note it must be kubectl create, not apply: the Workflow uses generateName so every submission gets a unique name (apply rejects generateName with "cannot use generate name with apply").'
+      zh-cn: '第 4b 步 - 提交两阶段 VLA 流水线。注意必须用 kubectl create 而不是 apply：Workflow 用的是 generateName，每次提交自动取唯一名字（用 apply 会报 cannot use generate name with apply）。'
+    Value: 'kubectl -n robot-demo get cm demo-manifests -o jsonpath=''{.data.02-vla-argo-workflow\.yaml}'' | kubectl create -f -'
+
+Metadata:
+  ALIYUN::ROS::Interface:
+    ParameterGroups:
+      - Parameters:
+          - PayType
+          - PayPeriodUnit
+          - PayPeriod
+        Label:
+          en: Charge Type Configuration
+          zh-cn: 付费类型配置
+      - Parameters:
+          - SysNodeInstanceType
+          - SysNodeCount
+          - LoginPassword
+        Label:
+          en: Management Node Pool
+          zh-cn: 管控节点池配置
+      - Parameters:
+          - GpuNodeInstanceType
+          - GpuNodeCount
+          - ErdmaImageId
+        Label:
+          en: GPU Compute Node Pool
+          zh-cn: GPU 算力节点池
+      - Parameters:
+          - CreateOSS
+          - ExistingOSSBucket
+          - OSSAkOption
+          - AccessKeyId
+          - AccessKeySecret
+        Label:
+          en: Storage Configuration
+          zh-cn: 存储配置
+      - Parameters:
+          - ZoneId
+          - ZoneIdSecondary
+          - VpcOption
+          - VpcId
+          - VSwitchId
+          - VSwitchIdSecondary
+          - VpcCidrBlock
+          - VSwitchCidrBlock
+          - VSwitchCidrBlockSecondary
+          - ServiceCidr
+        Label:
+          en: Network Configuration
+          zh-cn: 网络配置
