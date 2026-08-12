@@ -65,40 +65,19 @@ ACK 托管 Pro 集群（Terway-ENIIP）
 | cn-beijing | f / i / l | d / e / h / i / l |
 | cn-shanghai | l / m / n / b / e | b / e / l |
 
-L20N 裸金属（`ebmgn9g*`）的可用区随配额审批结果确定，申请白名单时一并跟阿里云确认；本服务开放地域为 **杭州 / 北京 / 上海**（eRDMA 云市场镜像只在这三地有镜像）。
-
-**挑选方法**：主可用区需同时满足 L20N 与管控规格。NAS 可用区由服务自动选择（不再暴露参数），走 VPC 挂载点，与计算节点跨可用区也可用，仅增加少量延迟。
+L20N 裸金属（`ebmgn9g*`）的可用区随配额审批结果确定，申请白名单时一并跟阿里云确认；本服务开放地域为 **杭州 / 北京 / 上海**（eRDMA 云市场镜像只在这三地有镜像）。NAS 可用区由服务自动选择，走 VPC 挂载点、跨可用区可用。
 
 ## 三、部署参数
 
-服务共 **24 个参数**，其中通常只需要改 3 个：可用区（主/次）、节点登录密码、GPU 节点数量。
+每个参数的中文说明、默认值、可选值在计算巢控制台表单里都有，这里不重复。部署时**真正需要你决定的只有 3 个**：
 
-| 分组 | 参数 | 默认 | 说明 |
-|---|---|---|---|
-| 网络 | 主/次可用区 | — | **必填**。GPU 节点池只落主可用区；次可用区仅用于打散管控节点 |
-| 网络 | VPC / 交换机 / 网段 | 新建 `/16` + `/20` | Terway-ENIIP 下节点与 Pod 共用交换机网段，建议 `/20` 及以上 |
-| 管控节点池 | 规格 / 数量 | `ecs.g8i.xlarge` / 2 | 承载 Argo、KubeRay、Fluid、eRDMA Controller、CSI 等组件，不承载 GPU 计算 |
-| 管控节点池 | 节点登录密码 | — | **必填** |
-| GPU 节点池 | 规格 | `ecs.ebmgn9g.64xlarge` | ⚠️ 只有 L20N 裸金属（`ebmgn9g` / `ebmgn9gc` / `ebmgn9ge`）默认自带两张 eRDMA 网卡。**需先申请 L20N 配额/白名单** |
-| GPU 节点池 | 数量 | 1 | **配额未到位时填 `0`**：控制面会完整就位且部署 100% 成功，拿到配额后改成 1 即可 |
-| GPU 节点池 | eRDMA 云市场镜像 ID | 留空 | 留空自动用当前地域的 `cmjj00066236` 镜像。**部署账号必须先订阅该云市场镜像**，否则节点创建失败 |
-| 存储 | OSS Bucket 选项 | `新建Bucket` | 新建时自动创建 Bucket；也可选「已有Bucket」复用自己的 |
-| 存储 | OSS AK 选项 | `NewAK` | 默认自动创建 **权限仅限该 Bucket** 的 RAM 用户与 AccessKey，**无需您提供任何凭证**；选 `ExistAK` 才需自填 AK |
-| 付费 | 付费类型 / 周期 | 按量付费 | 包年包月时才需填周期 |
+- **可用区（主/次）**：主可用区必须同时有 L20N 与管控规格；次可用区仅用于打散管控节点。
+- **节点登录密码**：必填。
+- **GPU 节点数量**：默认 1。**没申请到 L20N 配额时填 `0`** 先交付控制面（集群 + eRDMA 组件 + 白名单 + 存储 + 工具全部就位、100% 成功），拿到配额后在节点池改回 1，体检会自动铺到新节点。
 
-已写死在模板里、不再作为参数暴露的项（避免填错就整栈失败）：
+OSS 默认「新建 Bucket + 自动创建仅限该 Bucket 权限的 AK」，无需自备凭证；只有想复用已有 Bucket/AK 时才改那几项。
 
-| 项 | 固定值 | 原因 |
-|---|---|---|
-| 节点镜像类型 | `AliyunLinux3ContainerOptimized` | ACK 1.34+ 用 containerd 2.x，要求 cgroup v2 镜像；普通 Alinux3 是 cgroup v1，会报 `does not support cgroup v2` |
-| containerd 版本 | `2.1.9` | 必须是 ACK 当前为该 K8s 版本提供的版本 |
-| GPU 节点系统盘 | 500 GiB | 流水线镜像大、本地缓存模型权重 |
-| NVIDIA 驱动版本 | `580.126.09` | 官方 L20N + eRDMA 文档要求的版本；体检项 10 会校验实际装上的是否就是它 |
-| eRDMA 驱动大包 | `erdma_installer-1.5.9` | ≥1.5.9 默认启用 MPCC 拥塞算法，且 NCCL 不再需要 `NCCL_GRAPH_FILE` |
-| VLA 流水线镜像 | `public/vla-pipeline:torch2.7.0-cu128-20260729` | 计算巢公开镜像，固定 tag（`:latest` 会让部分节点残留旧镜像） |
-| 共享输出卷 | 通用型 NAS | 服务自动创建 |
-| 删除时一并删除存储 | `true` | 模板预建了 `dataset/`、`models/` 目录，Bucket 永远非空；若为 false 则实例永远删不掉。**删除实例前请自行备份需要保留的数据** |
-| Demo 清单下发 | 始终下发 | 只下发 ConfigMap 与 RBAC，不自动提交任务 |
+以下项已在模板中固定、控制台不暴露（填错就整栈失败，故不开放）：镜像类型（cgroup v2 容器优化版）、containerd 2.1.9、GPU 系统盘 500 GiB、NVIDIA 驱动 580.126.09、eRDMA 驱动大包 1.5.9、VLA 流水线镜像（计算巢公开镜像固定 tag）、共享卷（通用型 NAS）、**删除实例连带删存储（true，删前请备份）**。
 
 ### 存储说明
 
@@ -246,26 +225,6 @@ lerobot_dataset_smoothed/
 
 ## 六、排查清单
 
-以下均为实测出现过的问题。
-
-### 部署阶段
-
-| 现象 | 原因 | 处理 |
-|------|------|------|
-| 节点池报 `QuotaExceed.ElasticQuota ... limit 0` | GPU 实例族弹性配额为 0 | 配额中心提申请；或先把 GPU 节点数填 0 部署 |
-| 节点池报 `InstanceTypeNoStock` | 该可用区该规格实际无货（与库存查询结果可能不一致） | 换可用区或换规格 |
-| 节点池报 `does not support cgroup v2` | 节点镜像类型选了 cgroup v1 的 `AliyunLinux3` | 用 `AliyunLinux3ContainerOptimized` |
-| 节点池创建失败、提示 runtime 版本 | `containerd` 版本过期 | 用 ACK 当前提供的版本（现为 2.1.9） |
-| NAS 创建报 `InvaildZone.NotExist` | NAS 可用区不支持该 NAS 类型 | 本服务已不再暴露 NAS 可用区参数、由 NAS 自行选择，正常不会再遇到；若出现请提工单 |
-| Helm 应用超时 30 分钟、namespace 已建但无工作负载 | Chart 从 GitHub 直链拉取，国内不可达 | 用计算巢 Chart 部署物（默认） |
-| Argo 的 `crd-install` Pod `ImagePullBackOff` | `crds.full=true` 的钩子 Job 用 `registry.k8s.io/kubectl`（Google 域，国内 i/o timeout） | 模板已设 `crds.full: false`，改用精简 CRD 由 Helm 直接 apply |
-| Fluid 报 `function "lookup" not defined` | 社区版 fluid ≥1.0.0 的 chart 用了 Helm `lookup`，渲染器不支持 | 模板已改用 **ack-fluid**（≤1.0.4 不含 lookup，镜像走 region 内网前缀）|
-| `Properties.ChartUrl: "oci://compute-nest-chart-registry..." does not match pattern "^(http\|https)://"` | 计算巢 HelmChart 部署物占位符解析出的是 `oci://`，而 `ALIYUN::CS::ClusterHelmApplication.ChartUrl` 只接受 http/https | 模板已改用 `MODULE::ACS::ComputeNest::FluxOciHelmDeploy`（属性名是 `HelmChartUrl` / `ReleaseName`，并配 `DockerConfigJson` 占位符）|
-| 多个资源同时报 `RAM policy Forbidden for action cs:DescribeUserPermission` | **用服务商账号去创建服务实例**，该 RAM 用户没有这个权限（连模块内部资源也报，与模板无关）| 改用**被授权的消费者账号**部署；切勿因此把 `RolePolicy` 改成 `None`（会引出下一行的 403）|
-| KubeRay 组件报 `403 Forbidden` | ROS 以服务实例身份读 cluster-scoped 的 CRD 时权限不足 | 模板已设 `RolePolicy: EnsureAdminRoleAndBinding` |
-| 改完模板重新 import，报错跟之前一模一样 | `import` 只更新 draft，beta 仍指旧模板 | import 后再执行一次 `aliyun computenestsupplier PreLaunchService --ServiceId <sid>` |
-| 部署很久后才发现组件其实没装上 | 只要 API 调用返回就算成功 | 模板已给 Helm 应用与 addon 加 `WaitUntil`，把失败前移到部署阶段 |
-
 ### 运行阶段
 
 | 现象 | 原因 | 处理 |
@@ -280,20 +239,3 @@ lerobot_dataset_smoothed/
 | Pod 卡 ContainerCreating，事件报 OSS 挂载失败 | AccessKey 无权限，或 Bucket 前缀不存在 | 检查 `oss-secret` 与 RAM 权限；`dataset/`、`models/` 前缀由服务预建，勿删 |
 | GPU Pod 一直 Pending | GPU 节点被污点隔离，负载缺 toleration | 内置清单已带 `nvidia.com/gpu` toleration；自定义负载需补上 |
 
-## 七、成本与清理
-
-- **GPU 节点是主要成本**。Demo B 的 RayCluster 配了 `shutdownAfterJobFinishes: true`，任务结束即销毁 Ray 集群，但**节点不会自动释放**；长期不用请把 GPU 节点池数量调到 0。
-- 通用型 NAS 按实际用量计费。
-- **删除服务实例的注意事项**：
-  - 本服务把「删除实例时一并删除存储」**写死为 `true`**：删实例会连带删掉 OSS Bucket 与 NAS（因为模板预建了 `dataset/`、`models/` 目录，Bucket 永远非空，若不强删则实例永远删不掉）。**删除前请自行备份需要保留的数据集与产出。**
-  - ACK 集群的 CSI 组件可能自动创建一个 `cnfs-nas` 文件系统，**删除集群时不会回收**，它会占住交换机导致删除失败，并持续占用 NAS 配额。若实例删除卡在交换机依赖，请到 NAS 控制台删除对应的空 `cnfs-nas` 文件系统后重试。
-  - 云监控（CloudMonitor）等服务托管的弹性网卡也可能残留并阻塞交换机删除，这类 ENI 无法自行删除，需等其释放或提工单。
-
-## 八、已知限制
-
-1. **L20N 配额是硬门槛**：默认 GPU 规格 `ecs.ebmgn9g.64xlarge` 当前全地域售罄、弹性配额默认 0，必须先申请白名单。未拿到配额时把 GPU 节点数填 `0`，控制面可正常交付。
-2. **eRDMA 的设备级能力只在 L20N 上成立**：体检项 2～5（两张网卡 / PORT_ACTIVE / MTU 4096 / NUMA 绑定）依赖 L20N 出厂自带的两张 eRDMA 网卡。换成其他 GPU 规格时这 4 项会 FAIL，其余 6 项仍会 PASS。
-3. **地域限制为杭州 / 北京 / 上海**：eRDMA 云市场镜像目前只在这三个地域有对应镜像 ID（原先开放的香港已移除）。
-4. **多机 NCCL over eRDMA 尚未实测**：需要 2 台 L20N 才能验证跨节点集合通信走 IB（在训练日志里搜 `Using network IB`）。训练镜像内还必须包含 RDMA 用户态库（`libibverbs`、`librdmacm`、`ibverbs-providers`），否则节点侧正常但容器内用不到 eRDMA。
-5. **NAS 文件系统数量有账号级配额**（默认 20）。超限时报 `exceeds the quota`，需清理残留的空 `cnfs-nas` 文件系统或提配额。
-6. **节点 Ready 早于 UserData 跑完**：eRDMA 驱动 DKMS 编译约需 15 分钟。服务已用 readinessProbe 把这个时差封住（实例 Deployed 时体检报告一定完整），但如果你绕过服务直接看节点，可能看到驱动仍在编译。
