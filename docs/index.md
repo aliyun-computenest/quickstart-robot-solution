@@ -52,20 +52,8 @@ ACK 托管 Pro 集群（Terway-ENIIP）
 | # | 事项 | 说明 |
 |---|------|------|
 | 1 | **L20N 配额/白名单（最容易踩的坑）** | 默认 GPU 规格是 **L20N 裸金属 `ecs.ebmgn9g.64xlarge`**（只有它默认自带两张 eRDMA 网卡）。<br>⚠️ L20N 当前**全地域售罄且弹性配额默认为 0**，部署前必须先申请 L20N 配额/白名单，否则报 `InstanceTypeNoStock` 或 `QuotaExceed.ElasticQuota` 并整栈回滚。<br>⚠️ `DescribeAvailableResource` 显示 `WithStock` **不代表能创建**——它只查库存、不校验配额。<br>**未拿到配额时的用法**：把「GPU 节点数量」填 `0` 先部署控制面（集群 + eRDMA 组件 + 白名单 + 所有存储与工具都会就位，部署 100% 成功），拿到配额后在节点池把数量改成 1，体检 DaemonSet 会自动铺到新节点上。 |
-| 2 | **可用区要有交集** | L20N 与管控节点规格的开服可用区**并不一致**，主可用区必须同时满足两者。NAS 可用区由服务自动选择，无需操心。详见下方[可用区实测表](#可用区实测表)。 |
+| 2 | **主可用区要有交集** | L20N 与管控节点规格的开服可用区不一定一致，主可用区需**同时**有这两种规格。控制台选可用区时下拉框只列当前可选项；拿不准就用 `DescribeAvailableResource` 逐个可用区确认。NAS 可用区由服务自动选择，无需操心。 |
 | 3 | **镜像与模型权重已内置，无需自备** | VLA 流水线镜像用计算巢公开镜像 `compute-nest-registry.cn-hangzhou.cr.aliyuncs.com/public/vla-pipeline:torch2.7.0-cu128-20260729`（含 Data-Juicer + MoGe-2 + HaWoR + MegaSaM，固定 tag）。<br>HaWoR（3.1 GB）/ MANO（165 MB）权重与样例视频（12 MB）托管在计算巢公开制品库 `computenest-artifacts-<地域>/embodied-ai/`，**部署完成后在运维控制台跑一条命令即可备齐**（见第 1 步）。 |
-
-### 可用区实测表
-
-各地域实测结果（会随阿里云供给变化，部署前建议复核）：
-
-| 地域 | 管控 `g8i` | 通用型 NAS |
-|---|---|---|
-| cn-hangzhou | b / i / j / k | f / g |
-| cn-beijing | f / i / l | d / e / h / i / l |
-| cn-shanghai | l / m / n / b / e | b / e / l |
-
-L20N 裸金属（`ebmgn9g*`）的可用区随配额审批结果确定，申请白名单时一并跟阿里云确认；本服务开放地域为 **杭州 / 北京 / 上海**（eRDMA 云市场镜像只在这三地有镜像）。NAS 可用区由服务自动选择，走 VPC 挂载点、跨可用区可用。
 
 ## 三、部署参数
 

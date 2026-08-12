@@ -132,15 +132,6 @@ Parameters:
     Default: 1
     MinValue: 0
     MaxValue: 16
-  ErdmaImageId:
-    Type: String
-    Label:
-      en: eRDMA Marketplace Image ID
-      zh-cn: eRDMA 云市场镜像 ID
-    Description:
-      en: 'Marketplace image "Alibaba Cloud Linux 3 64-bit (eRDMA software stack preinstalled)", product code cmjj00066236. <b>You must subscribe to this image with the deploying account first, otherwise node creation fails.</b> Leave empty to use the version erdma_0.2.39_v1 image of the current region.'
-      zh-cn: '云市场镜像「Alibaba Cloud Linux 3 64位（预装 eRDMA 软件栈）」，商品码 cmjj00066236。<b>部署账号必须先订阅该镜像，否则节点创建失败。</b>留空则自动使用当前地域的 erdma_0.2.39_v1 版本镜像。'
-    Default: ''
   # 注：以下四个属于内部实现细节的参数已不再向消费者暴露，直接写死在资源里：
   #   GpuNodeSystemDiskSize → 500 GiB；NvidiaDriverVersion → 不固定（由 ACK 为所选 GPU 规格装默认驱动）；
   #   NodeImageType → AliyunLinux3ContainerOptimized；ContainerdVersion → 2.1.9。
@@ -381,13 +372,64 @@ Parameters:
 
 Mappings:
   # 云市场镜像「Alibaba Cloud Linux 3 64位（预装eRDMA软件栈）」cmjj00066236，版本 erdma_0.2.39_v1
+  # 覆盖该商品当前上架的全部 28 个地域（2026-08 扫描）；服务实际可部署地域仍由 config.yaml 的 AllowedRegions 决定
   ErdmaMarketImage:
-    cn-hangzhou:
-      ImageId: m-bp160ny2tx688nz1x4ff
     cn-beijing:
       ImageId: m-2ze8gkawny9b3oznby61
+    cn-chengdu:
+      ImageId: m-2vcc6ypg7e4pht2cby5o
+    cn-fuzhou:
+      ImageId: m-gw0bv99uaee14kw3iz3v
+    cn-guangzhou:
+      ImageId: m-7xvahy1g8pzk8gm6rb6d
+    cn-hangzhou:
+      ImageId: m-bp160ny2tx688nz1x4ff
+    cn-heyuan:
+      ImageId: m-f8z04vdf41evh3ddsn4d
+    cn-hongkong:
+      ImageId: m-j6c75fy44hpa5l6wggzj
+    cn-huhehaote:
+      ImageId: m-hp3dsim31gny320dlvb0
+    cn-nanjing:
+      ImageId: m-gc7bv99uaee14kw3iz3u
+    cn-qingdao:
+      ImageId: m-m5e8e94e17cktt7xcvpz
     cn-shanghai:
       ImageId: m-uf65n4utc5xzmb4uh5lf
+    cn-shenzhen:
+      ImageId: m-wz990aydeqwf5msha278
+    cn-wuhan-lr:
+      ImageId: m-n4a80chh8ae171afe36y
+    cn-wulanchabu:
+      ImageId: m-0jl4sfpc9b2nxsb6srhj
+    cn-zhangjiakou:
+      ImageId: m-8vbbohio15we7qq0j5yo
+    ap-northeast-1:
+      ImageId: m-6weaftrwde09qwsyfnzo
+    ap-northeast-2:
+      ImageId: m-mj73sk8pazxbo60q9kv9
+    ap-southeast-1:
+      ImageId: m-t4n74upo9f1u9w28ifdc
+    ap-southeast-3:
+      ImageId: m-8psbpyt3ja5sp3bvq8qr
+    ap-southeast-5:
+      ImageId: m-k1a078va1r52qzsu71e2
+    ap-southeast-6:
+      ImageId: m-5tshq1uodsrexqfq67ht
+    ap-southeast-7:
+      ImageId: m-0joeamn98quggjqt94xw
+    eu-central-1:
+      ImageId: m-gw84a6estbjn7f6xiuef
+    eu-west-1:
+      ImageId: m-d7oev71w8d8zni6pyrvq
+    me-central-1:
+      ImageId: m-l4vc5bgy52p6q2c2jjx7
+    me-east-1:
+      ImageId: m-eb34xobsg9j6e632bioe
+    us-east-1:
+      ImageId: m-0xi1qg5x67o8vy2kyk4r
+    us-west-1:
+      ImageId: m-rj91qg5x67o8vy2kyk4t
 
 Conditions:
   # OSS：新建 Bucket / 已有 Bucket；自动新建 RAM 用户+AK / 用户自备 AK
@@ -403,10 +445,6 @@ Conditions:
     Fn::Equals:
       - PrePaid
       - Ref: PayType
-  UseMappedImageCondition:
-    Fn::Equals:
-      - ''
-      - Ref: ErdmaImageId
 Resources:
   VpcModule:
     Type: MODULE::ACS::ComputeNest::VpcAndVSwitch
@@ -715,14 +753,12 @@ Resources:
               - VSwitchId
         ZoneIds:
           - Ref: ZoneId
+        # 云市场 eRDMA 镜像 cmjj00066236，按地域从 Mappings 取 ID（服务锁定 hz/bj/sh 三地域，均已覆盖）
         ImageId:
-          Fn::If:
-            - UseMappedImageCondition
-            - Fn::FindInMap:
-                - ErdmaMarketImage
-                - Ref: ALIYUN::Region
-                - ImageId
-            - Ref: ErdmaImageId
+          Fn::FindInMap:
+            - ErdmaMarketImage
+            - Ref: ALIYUN::Region
+            - ImageId
         # 云市场 eRDMA 镜像本身是 cgroup v2 的 Alinux3，配合 Container-Optimized 类型声明
         ImageType: AliyunLinux3ContainerOptimized
         SystemDiskCategory: cloud_essd
@@ -2183,7 +2219,6 @@ Metadata:
       - Parameters:
           - GpuNodeInstanceType
           - GpuNodeCount
-          - ErdmaImageId
         Label:
           en: GPU Compute Node Pool
           zh-cn: GPU 算力节点池
