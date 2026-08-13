@@ -17,9 +17,6 @@ Service:
         '{{ computenest::helmchart::fluid }}':
           ArtifactId: ${Artifact.Artifact_1.ArtifactId}
           ArtifactVersion: ${Artifact.Artifact_1.ArtifactVersion}
-        '{{ computenest::helmchart::argo-workflows }}':
-          ArtifactId: ${Artifact.Artifact_2.ArtifactId}
-          ArtifactVersion: ${Artifact.Artifact_2.ArtifactVersion}
     TemplateConfigs:
     - Name: 机器人数据处理方案（ACK + GPU）
       Url: ros_templates/template.yaml
@@ -53,13 +50,6 @@ Artifact:
       RepoName: ${HelmChartBuilder.HelmChart_1.RepoName}
       Tag: ${HelmChartBuilder.HelmChart_1.Tag}
       RepoType: Public
-  Artifact_2:
-    ArtifactType: HelmChart
-    ArtifactName: robot-solution-argo-workflows-helm-chart
-    ArtifactProperty:
-      RepoName: ${HelmChartBuilder.HelmChart_2.RepoName}
-      Tag: ${HelmChartBuilder.HelmChart_2.Tag}
-      RepoType: Public
 HelmChartBuilder:
   HelmChart_1:
     # 用 ACK 发行的 ack-fluid，不用社区版 fluid：社区版 >=1.0.0 的 chart 用了 Helm lookup 函数，
@@ -69,7 +59,3 @@ HelmChartBuilder:
     HelmChartPath: 'resources/artifact_resources/helm_chart/ack-fluid-1.0.4.tgz'
     RepoName: ack-fluid
     Tag: 1.0.4
-  HelmChart_2:
-    HelmChartPath: 'resources/artifact_resources/helm_chart/argo-workflows-1.0.23.tgz'
-    RepoName: argo-workflows
-    Tag: 1.0.23

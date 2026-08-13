@@ -1,14 +1,12 @@
 # 机器人数据处理方案（VLA 数据流水线 + eRDMA 就绪）部署文档
 
-> 计算巢服务：`service-525a4efce8e4433e9c8c`（beta 版本 `v13-drop-nvidia-driver-param`）。
+> 计算巢服务：`service-525a4efce8e4433e9c8c`（beta 版本 `v19-argo-ack-workflow-addon`）。
 >
 > **本版已将 eRDMA 能力合并进本服务：一套 GPU 节点池，既跑 VLA 数据流水线，又是 eRDMA 就绪的训练集群。**
 >
-> 已在测试账号完成两路实跑验证：
-> - **计算巢真实路径**（GPU 数=0，约 11 分钟）：Argo 1/1 + ack-fluid 1/1（部署物占位符正确解析）、Ray CRD 3 个、eRDMA Controller 2+2 Running、Terway 白名单 `{"creator":"terway"}` 生效、OSS 自动创建 RAM 用户/AK + 预检通过。
-> - **GPU 节点侧**（A10 替代规格，GPU 数=1，约 16 分钟）：UserData 三步全部落地、GPU 上报、固定驱动标签与体检校验一致、体检报告首次即完整（PASS 6 / FAIL 4 / SKIP 0）、三个 VLA 卷 Bound、vla-ops 控制台 1/1。
->
-> 两张 eRDMA 网卡的设备级校验（体检项 2～5：PORT_ACTIVE / MTU 4096 / NUMA / `aliyun/erdma` 上报）只能在真 L20N 上跑，待白名单到位后补。
+> 已完成真机验证：
+> - **真 L20N（ecs.ebmgn9gc.64xlarge，上海）**：eRDMA 体检 **10 项全 PASS**（两张网卡 / PORT_ACTIVE / MTU 4096 / NUMA 全部通过）、驱动 580.126.09 实机确认、节点上报 `nvidia.com/gpu:8` + `aliyun/erdma:400`、Demo A/B 全链路 Succeeded、data-juicer 六算子输出真实、Savitzky-Golay 平滑实测降抖动 45%~76%。
+> - **A10 替代规格全新部署回归**：集群 + terway v1.17.5 + ack-workflow addon + eRDMA 组件 + 合并 App 全部原生装成，Demo A/B 跑通（体检在 A10 上 PASS 6 / FAIL 4，项 2～5 需真 L20N，属预期）。
 
 本方案一键交付面向具身智能（VLA）的数据生产环境，内置两个可直接提交的 Demo 与一份 eRDMA 体检：
 
@@ -23,7 +21,7 @@ ACK 托管 Pro 集群（Terway-ENIIP）
 ├─ 节点池 sys-pool（主+次可用区打散）：N × 4c16g
 │    ├ ACK eRDMA Controller（ofed + allocateAllDevices）
 │    ├ Terway 网卡白名单 Job（eni_tag_filter=creator:terway，幂等）
-│    └ Argo Workflows / Fluid / KubeRay / CSI
+│    └ Argo Workflows（ACK ack-workflow addon）/ Fluid / KubeRay / CSI
 │
 └─ 节点池 gpu-pool（固定主可用区）：M × L20N 裸金属（默认 ecs.ebmgn9g.64xlarge）
      ├ 云市场 eRDMA 镜像（cmjj00066236）
@@ -45,42 +43,7 @@ ACK 托管 Pro 集群（Terway-ENIIP）
 
 数据流：`OSS(视频+模型) → GPU 阶段(RayJob) → NAS(*.json + LeRobot 原始集) → CPU 阶段 → NAS(最终平滑数据集)`
 
-## 二、部署前置准备
-
-存储资源（OSS Bucket、NAS）**由服务自动创建**，您不需要提前准备。部署前只需确认下面 3 项。
-
-| # | 事项 | 说明 |
-|---|------|------|
-| 1 | **L20N 配额/白名单（最容易踩的坑）** | 默认 GPU 规格是 **L20N 裸金属 `ecs.ebmgn9g.64xlarge`**（只有它默认自带两张 eRDMA 网卡）。<br>⚠️ L20N 当前**全地域售罄且弹性配额默认为 0**，部署前必须先申请 L20N 配额/白名单，否则报 `InstanceTypeNoStock` 或 `QuotaExceed.ElasticQuota` 并整栈回滚。<br>⚠️ `DescribeAvailableResource` 显示 `WithStock` **不代表能创建**——它只查库存、不校验配额。<br>**未拿到配额时的用法**：把「GPU 节点数量」填 `0` 先部署控制面（集群 + eRDMA 组件 + 白名单 + 所有存储与工具都会就位，部署 100% 成功），拿到配额后在节点池把数量改成 1，体检 DaemonSet 会自动铺到新节点上。 |
-| 2 | **主可用区要有交集** | L20N 与管控节点规格的开服可用区不一定一致，主可用区需**同时**有这两种规格。控制台选可用区时下拉框只列当前可选项；拿不准就用 `DescribeAvailableResource` 逐个可用区确认。NAS 可用区由服务自动选择，无需操心。 |
-| 3 | **镜像与模型权重已内置，无需自备** | VLA 流水线镜像用计算巢公开镜像 `compute-nest-registry.cn-hangzhou.cr.aliyuncs.com/public/vla-pipeline:torch2.7.0-cu128-20260729`（含 Data-Juicer + MoGe-2 + HaWoR + MegaSaM，固定 tag）。<br>HaWoR（3.1 GB）/ MANO（165 MB）权重与样例视频（12 MB）托管在计算巢公开制品库 `computenest-artifacts-<地域>/embodied-ai/`，**部署完成后在运维控制台跑一条命令即可备齐**（见第 1 步）。 |
-
-## 三、部署参数
-
-每个参数的中文说明、默认值、可选值在计算巢控制台表单里都有，这里不重复。部署时**真正需要你决定的只有 3 个**：
-
-- **可用区（主/次）**：主可用区必须同时有 L20N 与管控规格；次可用区仅用于打散管控节点。
-- **节点登录密码**：必填。
-- **GPU 节点数量**：默认 1。**没申请到 L20N 配额时填 `0`** 先交付控制面（集群 + eRDMA 组件 + 白名单 + 存储 + 工具全部就位、100% 成功），拿到配额后在节点池改回 1，体检会自动铺到新节点。
-
-OSS 默认「新建 Bucket + 自动创建仅限该 Bucket 权限的 AK」，无需自备凭证；只有想复用已有 Bucket/AK 时才改那几项。
-
-以下项已在模板中固定、控制台不暴露（填错就整栈失败，故不开放）：镜像类型（cgroup v2 容器优化版）、containerd 2.1.9、GPU 系统盘 500 GiB、NVIDIA 驱动 580.126.09、eRDMA 驱动大包 1.5.9、VLA 流水线镜像（计算巢公开镜像固定 tag）、共享卷（通用型 NAS）、**删除实例连带删存储（true，删前请备份）**。
-
-### 存储说明
-
-存储不再有可选项，全部由服务自动创建、固定形态：
-
-| 用途 | 后端 | PVC | 说明 |
-|---|---|---|---|
-| 源视频（只读输入） | OSS `dataset/` | `robot-dataset`（RWX） | ossfs 挂载 |
-| 模型权重（只读输入） | OSS `models/` | `robot-models`（RWX） | ossfs 挂载；RWX 是为了让运维控制台能写入下载的权重 |
-| 中间结果与最终数据集 | 通用型 NAS | `robot-output`（RWX） | 频繁写小文件，ossfs 不适合 |
-
-⚠️ **NAS 文件系统数量有账号级配额（默认 20）**，实测遇到过 `exceeds the quota: creation(1) + usage(20) > quota(20)` 而直接建栈失败。部署前建议看一眼 NAS 控制台，清理残留的空 `cnfs-nas` 文件系统或提配额。
-
-
-## 四、部署后操作（3 步）
+## 二、部署后操作（3 步）
 
 资源栈的**输出**里已给出每一步可直接复制的命令。先获取 kubeconfig：
 
@@ -126,19 +89,11 @@ kubectl get nodes -l robot-solution.aliyun.com/node-role=gpu -o jsonpath='{range
 - 节点命令**无输出** = GPU 数为 0（无配额时的正常态），配额到位后节点池改回 1 即可。
 - 没有 `aliyun/erdma` = eRDMA 组件未生效；节点有但无 `nvidia.com/gpu` = 驱动还在装，等几分钟。
 
-### 第 3 步：创建脚本 ConfigMap
+### 第 3 步：提交 Demo
 
-```bash
-git clone https://github.com/aliyun-computenest/quickstart-robot-solution.git
-cd quickstart-robot-solution
-kubectl -n robot-demo create cm vla-pipeline-script \
-  --from-file=demo/vla_gpu_pipeline.py \
-  --from-file=demo/vla_cpu_postprocess.py
-```
+Demo 清单与流水线 Python 脚本都已随部署下发（ConfigMap `demo-manifests` 与 `vla-pipeline-script`），**无需再手动 git clone 或建 ConfigMap**，直接提交即可（见下节）。需调整脚本时，`kubectl -n robot-demo edit cm vla-pipeline-script` 即可。
 
-## 五、运行 Demo
-
-Demo 清单已随部署下发到 ConfigMap `demo-manifests`，直接提交即可。
+## 三、运行 Demo
 
 ### Demo A：GPU 环境自检（约 1 分钟）
 
@@ -183,7 +138,7 @@ lerobot_dataset_smoothed/
 | `VLA_GPU_ACTORS` | 集群 GPU 卡数 | GPU Actor 并行度 |
 | `VLA_SLIM_OUTPUT` | 0 | 置 1 时落盘前裁掉 depth 等大字段，规模化时可把落盘量降低一个数量级 |
 
-## 六、排查清单（运行阶段）
+## 四、排查清单（运行阶段）
 
 | 现象 | 原因 | 处理 |
 |------|------|------|
@@ -194,5 +149,6 @@ lerobot_dataset_smoothed/
 | MegaSaM 报 `no kernel image is available` | 镜像内 CUDA 扩展的算力架构不匹配 | 重编 `droid_backends`/`lietorch_backends`，`TORCH_CUDA_ARCH_LIST` 含目标架构（L20 为 8.9） |
 | MegaSaM 运行但 `cam_c2w` 为空 | DROID-SLAM 至少需要 8 帧 | `VLA_FRAME_NUM` ≥ 8，推荐 20 |
 | HaWoR 阶段超时或 `ConnectionError` | 模型权重未备齐 | 按[第 1 步](#第-1-步在运维控制台备料一条命令)在运维控制台跑一次 `prepare-data.sh` |
+| MoGe-2 相机标定阶段报 `LocalEntryNotFoundError` / HuggingFace 下载失败 | MoGe-2 权重在**运行时从 HF（hf-mirror.com）在线拉取**，未预置；HF 偶发不可达时该阶段失败（实测碰到过一次） | 重试 Workflow 即可（实测重试即成功）；HF 长期不通时在有网环境预拉 MoGe-2 权重放入 models/ 卷 |
 | Pod 卡 ContainerCreating，事件报 OSS 挂载失败 | AccessKey 无权限，或 Bucket 前缀不存在 | 检查 `oss-secret` 与 RAM 权限；`dataset/`、`models/` 前缀由服务预建，勿删 |
 | GPU Pod 一直 Pending | GPU 节点被污点隔离，负载缺 toleration | 内置清单已带 `nvidia.com/gpu` toleration；自定义负载需补上 |
