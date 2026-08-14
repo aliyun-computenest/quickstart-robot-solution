@@ -35,7 +35,7 @@ Service:
   ApprovalType: Manual
   ServiceInfo:
   - Locale: zh-CN
-    Name: 机器人数据处理方案（VLA 数据流水线）
+    Name: 具身智能运行基础环境
     ShortDescription: 一键交付面向具身智能的 VLA 数据生产环境：ACK 托管 Pro 集群 + GPU 算力节点池 + OSS/NAS
       分层存储 + Fluid 数据加速，内置 Argo Workflows 与 KubeRay 编排的两阶段数据流水线（第一人称视频 → LeRobot
       v2.0 数据集）。

@@ -66,15 +66,33 @@ Parameters:
       en: Management Node Instance Type
       zh-cn: 管控节点规格
     Description:
-      en: 'Instance type of the management node pool, which hosts control-plane style components (Argo Workflows, KubeRay operator, Fluid, CSI). GPU workloads never run here. Default ecs.g8i.xlarge = 4 vCPU / 16 GiB.'
-      zh-cn: '管控节点池规格，用于承载 Argo Workflows、KubeRay operator、Fluid、CSI 等组件，不承载 GPU 计算。默认 ecs.g8i.xlarge = 4 vCPU / 16 GiB。'
-    Default: ecs.g8i.xlarge
+      en: Instance type of the management node pool, which hosts control-plane style components (Argo Workflows, KubeRay operator, Fluid, CSI). GPU workloads never run here. Limited to u1 sizes with at least 4 vCPU / 16 GiB (the recommended floor for these components). Default ecs.u1-c1m4.xlarge = 4 vCPU / 16 GiB.
+      zh-cn: 管控节点池规格，用于承载 Argo Workflows、KubeRay operator、Fluid、CSI 等组件，不承载 GPU 计算。已限定为满足需求的 u1 规格（≥ 4 vCPU / 16 GiB，这些组件的推荐下限）。默认 ecs.u1-c1m4.xlarge = 4 vCPU / 16 GiB。
+    Default: ecs.u1-c1m4.xlarge
     Required: true
+    AllowedValues:
+      - ecs.u1-c1m4.xlarge
+      - ecs.u1-c1m8.xlarge
+      - ecs.u1-c1m2.2xlarge
+      - ecs.u1-c1m4.2xlarge
     AssociationProperty: ALIYUN::ECS::Instance::InstanceType
     AssociationPropertyMetadata:
       ZoneId: ${ZoneId}
       CreateACKClusterParams:
         NetworkPlugin: terway-eniip
+      ValueLabelMapping:
+        ecs.u1-c1m4.xlarge:
+          zh-cn: ecs.u1-c1m4.xlarge（4 vCPU / 16 GiB）
+          en: ecs.u1-c1m4.xlarge (4 vCPU / 16 GiB)
+        ecs.u1-c1m8.xlarge:
+          zh-cn: ecs.u1-c1m8.xlarge（4 vCPU / 32 GiB）
+          en: ecs.u1-c1m8.xlarge (4 vCPU / 32 GiB)
+        ecs.u1-c1m2.2xlarge:
+          zh-cn: ecs.u1-c1m2.2xlarge（8 vCPU / 16 GiB）
+          en: ecs.u1-c1m2.2xlarge (8 vCPU / 16 GiB)
+        ecs.u1-c1m4.2xlarge:
+          zh-cn: ecs.u1-c1m4.2xlarge（8 vCPU / 32 GiB）
+          en: ecs.u1-c1m4.2xlarge (8 vCPU / 32 GiB)
   SysNodeCount:
     Type: Number
     Label:
@@ -89,11 +107,11 @@ Parameters:
   NasStorageType:
     Type: String
     Label:
-      en: Shared Output NAS Storage Type
-      zh-cn: 共享输出 NAS 存储类型
+      en: Shared Storage Type
+      zh-cn: 共享存储类型
     Description:
-      en: This service automatically creates a General-purpose NAS file system as the shared output volume (PVC robot-output, RWX) for pipeline intermediate results and final datasets. Performance = higher throughput/IOPS; Capacity = lower cost for large cold data. Deleting the instance deletes this NAS and its data.
-      zh-cn: 本服务会自动创建一个通用型 NAS 文件系统作为共享输出存储（PVC robot-output，RWX），存放流水线中间结果与最终数据集。Performance（性能型）吞吐/IOPS 更高；Capacity（容量型）适合大容量冷数据、更省成本。删除实例会连同该 NAS 及其数据一并删除。
+      en: The service automatically creates a General-purpose NAS file system as the shared storage (PVC robot-output, RWX) for pipeline intermediate results and final datasets. Performance = higher throughput/IOPS; Capacity = lower cost for large cold data. Deleting the instance deletes this NAS and its data.
+      zh-cn: 本服务会自动创建一个通用型 NAS 文件系统作为共享存储（PVC robot-output，RWX），存放流水线中间结果与最终数据集。Performance（性能型）吞吐/IOPS 更高；Capacity（容量型）适合大容量冷数据、更省成本。删除实例会连同该 NAS 及其数据一并删除。
     Default: Performance
     AllowedValues:
       - Performance
@@ -171,13 +189,21 @@ Parameters:
       en: OSS AccessKey Option
       zh-cn: OSS AK 选项
     Description:
-      en: '<b>NewAK</b>: ComputeNest creates a RAM user and AccessKey with permissions limited to the bucket above (recommended).<br><b>ExistAK</b>: you provide an AccessKey that already has oss:* permission on that bucket.'
-      zh-cn: '<b>NewAK</b>：由服务自动创建 RAM 用户与 AccessKey，权限仅限上方 Bucket（推荐）。<br><b>ExistAK</b>：您自行提供对该 Bucket 有 oss:* 权限的 AccessKey。<br>需要的权限策略：<pre><code>{"Version":"1","Statement":[{"Action":"oss:*","Resource":["acs:oss:*:*:BUCKET_NAME","acs:oss:*:*:BUCKET_NAME/*"],"Effect":"Allow"}]}</code></pre>'
+      en: '<b>Auto-create AccessKey</b>: ComputeNest creates a RAM user and AccessKey with permissions limited to the bucket above (recommended).<br><b>Use existing AccessKey</b>: you provide an AccessKey that already has oss:* permission on that bucket.'
+      zh-cn: <b>自动创建 AccessKey</b>：由服务自动创建 RAM 用户与 AccessKey，权限仅限上方 Bucket（推荐）。<br><b>使用已有 AccessKey</b>：您自行提供对该 Bucket 有 oss:* 权限的 AccessKey（需的权限策略见下方“已有 AccessKey 所需权限策略”）。
     Default: NewAK
     Required: true
     AllowedValues:
       - NewAK
       - ExistAK
+    AssociationPropertyMetadata:
+      ValueLabelMapping:
+        NewAK:
+          zh-cn: 自动创建 AccessKey
+          en: Auto-create AccessKey
+        ExistAK:
+          zh-cn: 使用已有 AccessKey
+          en: Use existing AccessKey
   AccessKeyId:
     Type: String
     Label:
@@ -209,6 +235,64 @@ Parameters:
           Fn::Equals:
             - ${OSSAkOption}
             - ExistAK
+  ExistingAccessKeyRequiredPolicy:
+    Type: String
+    Label:
+      en: Required RAM Policy for Existing AccessKey
+      zh-cn: 已有 AccessKey 所需权限策略
+    Description:
+      en: 'When OSS AK Option is ExistAK, attach the following policy to the RAM user/role that owns the AccessKey (oss:* on the target bucket). Auto-filled by the selected bucket option.'
+      zh-cn: '当 OSS AK 选项为 ExistAK 时，请给该 AccessKey 对应的 RAM 用户/角色配置以下权限（对目标 Bucket 的 oss:*）。内容根据 Bucket 选项自动填充。'
+    AssociationProperty: ALIYUN::OOS::Command::CommandContent
+    ReadOnly: true
+    Default: ''
+    AssociationPropertyMetadata:
+      Visible:
+        Condition:
+          Fn::Equals:
+            - ${OSSAkOption}
+            - ExistAK
+      DynamicValue:
+        - Condition:
+            Fn::Equals:
+              - ${CreateOSS}
+              - 新建Bucket
+          Value: |
+            {
+              "Version": "1",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "oss:*"
+                  ],
+                  "Resource": [
+                    "acs:oss:*:*:robot-data-*",
+                    "acs:oss:*:*:robot-data-*/*"
+                  ]
+                }
+              ]
+            }
+        - Condition:
+            Fn::Equals:
+              - ${CreateOSS}
+              - 已有Bucket
+          Value: |
+            {
+              "Version": "1",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "oss:*"
+                  ],
+                  "Resource": [
+                    "acs:oss:*:*:<%= ExistingOSSBucket %>",
+                    "acs:oss:*:*:<%= ExistingOSSBucket %>/*"
+                  ]
+                }
+              ]
+            }
   ZoneId:
     Type: String
     Label:
@@ -2562,6 +2646,7 @@ Metadata:
           - OSSAkOption
           - AccessKeyId
           - AccessKeySecret
+          - ExistingAccessKeyRequiredPolicy
           - NasStorageType
         Label:
           en: Storage Configuration

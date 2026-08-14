@@ -1,14 +1,8 @@
-# 机器人数据处理方案（VLA 数据流水线 + eRDMA 就绪）部署文档
+# 具身智能运行基础环境部署文档
 
-> 计算巢服务：`service-525a4efce8e4433e9c8c`（beta 版本 `v19-argo-ack-workflow-addon`）。
->
-> **本版已将 eRDMA 能力合并进本服务：一套 GPU 节点池，既跑 VLA 数据流水线，又是 eRDMA 就绪的训练集群。**
->
-> 已完成真机验证：
-> - **真 L20N（ecs.ebmgn9gc.64xlarge，上海）**：eRDMA 体检 **10 项全 PASS**（两张网卡 / PORT_ACTIVE / MTU 4096 / NUMA 全部通过）、驱动 580.126.09 实机确认、节点上报 `nvidia.com/gpu:8` + `aliyun/erdma:400`、Demo A/B 全链路 Succeeded、data-juicer 六算子输出真实、Savitzky-Golay 平滑实测降抖动 45%~76%。
-> - **A10 替代规格全新部署回归**：集群 + terway v1.17.5 + ack-workflow addon + eRDMA 组件 + 合并 App 全部原生装成，Demo A/B 跑通（体检在 A10 上 PASS 6 / FAIL 4，项 2～5 需真 L20N，属预期）。
+> 本方案将 **VLA 数据生产** 与 **eRDMA 训练就绪** 合并到一套 GPU 集群：一键交付 ACK 托管 Pro 集群 + L20N GPU 节点池 + OSS/NAS 分层存储，开箱即可跑两阶段 VLA 数据流水线，同时集群已完成 eRDMA 高性能网络就绪（升驱动 / 关 PCIe ACS / Terway 网卡白名单 / 逐节点体检）。
 
-本方案一键交付面向具身智能（VLA）的数据生产环境，内置两个可直接提交的 Demo 与一份 eRDMA 体检：
+本方案内置两个可直接提交的 Demo 与一份 eRDMA 体检：
 
 - **Demo A**：GPU 环境自检（驱动、CUDA、Data-Juicer 算子、存储卷挂载）
 - **Demo B**：两阶段 VLA 数据流水线（第一人称视频 → LeRobot v2.0 数据集），由 Argo Workflows 编排、KubeRay 承载 GPU 阶段
@@ -83,9 +77,9 @@ kubectl logs -n erdma-check -l app=erdma-env-check --tail=-1 --prefix
 kubectl get nodes -l robot-solution.aliyun.com/node-role=gpu -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.allocatable}{"\n"}{end}'
 ```
 
-体检报告 A 段是 10 项 PASS/FAIL 判定 + 一行 `SUMMARY PASS=.. FAIL=.. SKIP=..`（B 段官方 `env_check.py`、C 段原始信息供排查）。真 L20N 上应 **10 项全 PASS**，且节点同时上报 `"nvidia.com/gpu":"8"` 与 `"aliyun/erdma":"400"`。
+体检报告 A 段是 10 项 PASS/FAIL 判定 + 一行 `SUMMARY PASS=.. FAIL=.. SKIP=..`（B 段官方 `env_check.py`、C 段原始信息供排查）。L20N 上应 **10 项全 PASS**，且节点同时上报 `"nvidia.com/gpu":"8"` 与 `"aliyun/erdma":"400"`。
 
-- 体检项 **2～5**（两张网卡 / PORT_ACTIVE / MTU 4096 / NUMA）依赖 L20N 出厂自带的 eRDMA 网卡，**用非 L20N 规格（如 A10）时必然 FAIL，属预期**。
+- 体检项 **2～5**（两张网卡 / PORT_ACTIVE / MTU 4096 / NUMA）依赖 L20N 出厂自带的两张 eRDMA 网卡，在 L20N 上应全部 PASS。
 - 节点命令**无输出** = GPU 数为 0（无配额时的正常态），配额到位后节点池改回 1 即可。
 - 没有 `aliyun/erdma` = eRDMA 组件未生效；节点有但无 `nvidia.com/gpu` = 驱动还在装，等几分钟。
 
@@ -149,7 +143,7 @@ ls -lh /data/output/vla-cpu-postprocess/lerobot_dataset_smoothed/data/chunk-000/
 cat /data/output/vla-cpu-postprocess/lerobot_dataset_smoothed/meta/info.json | jq -c '{robot_type,total_episodes,total_frames,fps}'
 ```
 
-实测输出示例（跑完 4 段视频）：
+输出示例（跑完 4 段视频）：
 
 ```
 {"robot_type":"egodex_hand","total_episodes":4,"total_frames":43,"fps":10}
@@ -218,6 +212,6 @@ kubectl -n robot-demo get cm demo-manifests -o jsonpath='{.data.02-vla-argo-work
 | MegaSaM 报 `no kernel image is available` | 镜像内 CUDA 扩展的算力架构不匹配 | 重编 `droid_backends`/`lietorch_backends`，`TORCH_CUDA_ARCH_LIST` 含目标架构（L20 为 8.9） |
 | MegaSaM 运行但 `cam_c2w` 为空 | DROID-SLAM 至少需要 8 帧 | `VLA_FRAME_NUM` ≥ 8，推荐 20 |
 | HaWoR 阶段超时或 `ConnectionError` | 模型权重未备齐 | 按[第 1 步](#第-1-步在运维控制台备料一条命令)在运维控制台跑一次 `prepare-data.sh` |
-| MoGe-2 相机标定阶段报 `LocalEntryNotFoundError` / HuggingFace 下载失败 | MoGe-2 权重在**运行时从 HF（hf-mirror.com）在线拉取**，未预置；HF 偶发不可达时该阶段失败（实测碰到过一次） | 重试 Workflow 即可（实测重试即成功）；HF 长期不通时在有网环境预拉 MoGe-2 权重放入 models/ 卷 |
+| MoGe-2 相机标定阶段报 `LocalEntryNotFoundError` / HuggingFace 下载失败 | MoGe-2 权重在**运行时从 HF（hf-mirror.com）在线拉取**，未预置；HF 偶发不可达时该阶段会失败 | 重试 Workflow 即可；HF 长期不通时在有网环境预拉 MoGe-2 权重放入 models/ 卷 |
 | Pod 卡 ContainerCreating，事件报 OSS 挂载失败 | AccessKey 无权限，或 Bucket 前缀不存在 | 检查 `oss-secret` 与 RAM 权限；`dataset/`、`models/` 前缀由服务预建，勿删 |
 | GPU Pod 一直 Pending | GPU 节点被污点隔离，负载缺 toleration | 内置清单已带 `nvidia.com/gpu` toleration；自定义负载需补上 |
