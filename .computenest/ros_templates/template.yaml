@@ -1848,6 +1848,8 @@ Resources:
                     - { name: dataset,   mountPath: /data/dataset }
                     - { name: output,    mountPath: /data/output }
                     - { name: materials, mountPath: /materials, readOnly: true }
+                    - { name: scripts,   mountPath: /scripts, readOnly: true }
+                    - { name: demos,     mountPath: /demo-manifests, readOnly: true }
               volumes:
                 - name: models
                   persistentVolumeClaim: { claimName: robot-models }
@@ -1859,6 +1861,10 @@ Resources:
                   configMap:
                     name: vla-materials
                     defaultMode: 0755
+                - name: scripts
+                  configMap: { name: vla-pipeline-script }
+                - name: demos
+                  configMap: { name: demo-manifests }
         ---
         apiVersion: v1
         kind: ConfigMap
@@ -2487,14 +2493,6 @@ Outputs:
             Fn::GetAtt:
               - AckCluster
               - ClusterId
-  GpuNodePoolId:
-    Description:
-      en: GPU node pool ID (scale in or out here)
-      zh-cn: GPU 节点池 ID（在此扩容或缩容）
-    Value:
-      Fn::GetAtt:
-        - GpuNodePool
-        - NodePoolId
   OssBucketName:
     Description:
       en: OSS bucket used by this instance (upload your videos and model weights here)
@@ -2506,14 +2504,6 @@ Outputs:
             - OssBucket
             - Name
         - Ref: ExistingOSSBucket
-  OssPreflightResult:
-    Description:
-      en: OSS preflight result (bucket reachable, required prefixes present, object counts)
-      zh-cn: OSS 预检结果（Bucket 可达、必需前缀存在、当前对象数）
-    Value:
-      Fn::GetAtt:
-        - OssPreflightWaitCondition
-        - Data
   Step1PrepareMaterials:
     Description:
       en: 'Step 1 - enter the ops console and pull the materials (HaWoR 3.1GB + MANO 165MB + sample videos 12MB) from the ComputeNest public artifact bucket. Nothing to prepare on your side. Add --check-only to verify only.'
@@ -2533,25 +2523,15 @@ Outputs:
                   - OssBucket
                   - Name
               - Ref: ExistingOSSBucket
-  Step2VerifyGpuNodes:
+  Step2SubmitDemoA:
     Description:
-      en: 'Step 2 - verify that GPU resources are reported by the nodes (expect nvidia.com/gpu)'
-      zh-cn: '第 2 步 - 验证节点已上报 GPU 资源（预期出现 nvidia.com/gpu）'
-    Value: 'kubectl get nodes -l robot-solution.aliyun.com/node-role=gpu -o jsonpath=''{range .items[*]}{.metadata.name}{"\t"}{.status.allocatable}{"\n"}{end}'''
-  Step3CreateScriptConfigMap:
-    Description:
-      en: 'Step 3 - create the pipeline script ConfigMap from the repository demo directory'
-      zh-cn: '第 3 步 - 用仓库 demo 目录下的脚本创建 ConfigMap'
-    Value: 'kubectl -n robot-demo create cm vla-pipeline-script --from-file=demo/vla_gpu_pipeline.py --from-file=demo/vla_cpu_postprocess.py'
-  Step4SubmitDemoA:
-    Description:
-      en: 'Step 4a - GPU self-check (about 1 minute once the image is cached; the first pull of the VLA image takes around 10 minutes). The pipeline image is already baked in, nothing to replace.'
-      zh-cn: '第 4a 步 - GPU 环境自检（镜像已缓存时约 1 分钟；首次拉 VLA 镜像约 10 分钟）。流水线镜像已内置，无需替换。'
+      en: 'Step 2a - GPU self-check (about 1 minute once the image is cached; the first pull takes around 10 minutes).'
+      zh-cn: '第 2a 步 - GPU 环境自检（镜像已缓存时约 1 分钟；首次拉 VLA 镜像约 10 分钟）'
     Value: 'kubectl -n robot-demo get cm demo-manifests -o jsonpath=''{.data.01-gpu-check\.yaml}'' | kubectl apply -f -'
-  Step4SubmitDemoB:
+  Step2SubmitDemoB:
     Description:
-      en: 'Step 4b - submit the two-stage VLA pipeline. Note it must be kubectl create, not apply: the Workflow uses generateName so every submission gets a unique name (apply rejects generateName with "cannot use generate name with apply").'
-      zh-cn: '第 4b 步 - 提交两阶段 VLA 流水线。注意必须用 kubectl create 而不是 apply：Workflow 用的是 generateName，每次提交自动取唯一名字（用 apply 会报 cannot use generate name with apply）。'
+      en: 'Step 2b - submit the two-stage VLA pipeline (must use kubectl create, not apply).'
+      zh-cn: '第 2b 步 - 提交两阶段 VLA 流水线（必须用 kubectl create 而不是 apply）'
     Value: 'kubectl -n robot-demo get cm demo-manifests -o jsonpath=''{.data.02-vla-argo-workflow\.yaml}'' | kubectl create -f -'
 
 Metadata:

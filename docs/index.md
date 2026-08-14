@@ -89,29 +89,86 @@ kubectl get nodes -l robot-solution.aliyun.com/node-role=gpu -o jsonpath='{range
 - 节点命令**无输出** = GPU 数为 0（无配额时的正常态），配额到位后节点池改回 1 即可。
 - 没有 `aliyun/erdma` = eRDMA 组件未生效；节点有但无 `nvidia.com/gpu` = 驱动还在装，等几分钟。
 
-### 第 3 步：提交 Demo
+### 第 3 步：进 vla-ops 一站式跑数据流（推荐）
 
-Demo 清单与流水线 Python 脚本都已随部署下发（ConfigMap `demo-manifests` 与 `vla-pipeline-script`），**无需再手动 git clone 或建 ConfigMap**，直接提交即可（见下节）。需调整脚本时，`kubectl -n robot-demo edit cm vla-pipeline-script` 即可。
-
-## 三、运行 Demo
-
-### Demo A：GPU 环境自检（约 1 分钟）
+**vla-ops 里已内置 `kubectl` / `ossutil` / `jq`，并挂好了脚本、Demo 清单和三个数据卷**——不用在本地装任何工具，进去就能把数据流从头跑到尾：
 
 ```bash
-kubectl -n robot-demo get cm demo-manifests -o jsonpath='{.data.01-gpu-check\.yaml}' | kubectl apply -f -
-kubectl -n robot-demo logs -f gpu-check
+kubectl exec -it deploy/vla-ops -n robot-demo -- bash
 ```
 
-依次输出 `nvidia-smi`、torch CUDA 可用性与卡数、Data-Juicer 算子导入结果、挂载目录内容。**这一步同时验证 OSS 卷能否真的挂载**，建议在跑 Demo B 前先过这关。
+进去后看得到这些：
 
-### Demo B：两阶段 VLA 数据流水线
+| 路径 | 内容 |
+|---|---|
+| `/demo-manifests/` | `01-gpu-check.yaml`、`02-vla-argo-workflow.yaml`（Demo 清单）|
+| `/scripts/` | `vla_gpu_pipeline.py`、`vla_cpu_postprocess.py`（流水线代码）|
+| `/data/dataset` `/data/models` `/data/output` | 源视频 / 模型权重 / 产出 |
+| `/materials/prepare-data.sh` | 备料脚本 |
+
+**完整跑一次数据流（在 pod 内依次执行）：**
 
 ```bash
-kubectl -n robot-demo get cm demo-manifests -o jsonpath='{.data.02-vla-argo-workflow\.yaml}' | kubectl create -f -
-argo -n robot-demo watch @latest
+# 1) 备料（首次必做，已备过会自动跳过）
+bash /materials/prepare-data.sh
+
+# 2) 先过 GPU 自检（验证卡、CUDA、算子、卷挂载）
+kubectl apply -f /demo-manifests/01-gpu-check.yaml
+kubectl logs -f gpu-check
+
+# 3) 提交两阶段数据流水线
+kubectl create -f /demo-manifests/02-vla-argo-workflow.yaml
 ```
 
-流水线阶段：
+> ⚠️ **Demo B 必须用 `kubectl create`，不能用 `apply`**。Workflow 用的是 `generateName`（每次提交自动取唯一名字），用 apply 会直接报：
+> `error: from vla-pipeline-: cannot use generate name with apply`
+> （Demo A 是固定名字的 Pod，apply / create 都行。）
+
+**看运行进展**（pod 内无 argo CLI，用 kubectl 就够）：
+
+```bash
+kubectl get workflow -n robot-demo                 # STATUS: Running → Succeeded
+kubectl get pod -n robot-demo | grep vla-pipeline   # 各阶段 pod
+```
+
+阶段预期：`gpu-pipeline-rayjob`（GPU 阶段，RayJob）先 Running → Completed，紧接着 `cpu-postprocess-pod` Running → Completed，最后 Workflow 变 **Succeeded**。
+
+> 首次提交比较慢（约 20～25 分钟），**主要时间花在拉 11.6 GB 流水线镜像**（head / worker / submitter 各自拉一次，每次约 10 分钟）；GPU 计算本身在 L20N 上只约 90 秒。镜像缓存后再跑约 4～5 分钟。看到 pod 卡在 `ContainerCreating` 属正常。
+
+**确认数据流真的跑通了**（看产出，而不只看状态）：
+
+```bash
+# GPU 阶段产出：LeRobot 原始集
+ls /data/output/vla-gpu-pipeline/lerobot_dataset/          # data  meta  videos
+
+# CPU 阶段产出：平滑后的最终数据集
+ls /data/output/vla-cpu-postprocess/lerobot_dataset_smoothed/
+ls -lh /data/output/vla-cpu-postprocess/lerobot_dataset_smoothed/data/chunk-000/   # episode_*.parquet
+
+# 数据集元信息
+cat /data/output/vla-cpu-postprocess/lerobot_dataset_smoothed/meta/info.json | jq -c '{robot_type,total_episodes,total_frames,fps}'
+```
+
+实测输出示例（跑完 4 段视频）：
+
+```
+{"robot_type":"egodex_hand","total_episodes":4,"total_frames":43,"fps":10}
+episode_000001.parquet   6.9K
+episode_000002.parquet   7.4K
+```
+
+能看到 `lerobot_dataset_smoothed/` 下有 `episode_*.parquet` + `meta/info.json` + `videos/`，就说明**整条数据流（视频 → MoGe-2 标定 → HaWoR+MegaSaM → 手部动作 → LeRobot 导出 → 轨迹平滑）已跑通**。
+
+想改流水线行为：`/scripts/` 里的代码是只读挂载，要真改用 `kubectl -n robot-demo edit cm vla-pipeline-script`（改完下次提交生效）；调参数则在 Workflow 的 `env` 里加（见下节环境变量表）。
+
+## 三、数据流水线细节
+
+### 两个 Demo 分别做什么
+
+- **Demo A（`01-gpu-check.yaml`）**：单 Pod 自检，依次输出 `nvidia-smi`、torch CUDA 可用性与卡数、Data-Juicer 算子导入结果、挂载目录内容。**它同时验证 OSS 卷能不能真的挂载**，建议先过这关再跑 Demo B。
+- **Demo B（`02-vla-argo-workflow.yaml`）**：Argo DAG 编排的两阶段数据流水线。
+
+### 流水线阶段
 
 ```
 Step 1（GPU，RayJob，任务结束自动销毁 RayCluster）
@@ -129,6 +186,17 @@ lerobot_dataset_smoothed/
   meta/{info.json, episodes.jsonl, tasks.jsonl, modality.json}
 ```
 
+### 从集群外提交（备选）
+
+如果不想进 pod、本地已有 kubectl，也可以直接从 ConfigMap 取清单提交（注意 Demo B 同样必须 `create`）：
+
+```bash
+kubectl -n robot-demo get cm demo-manifests -o jsonpath='{.data.01-gpu-check\.yaml}' | kubectl apply -f -
+kubectl -n robot-demo get cm demo-manifests -o jsonpath='{.data.02-vla-argo-workflow\.yaml}' | kubectl create -f -
+```
+
+本地装了 argo CLI 的话可用 `argo -n robot-demo watch @latest` 看实时 DAG（vla-ops 内没有 argo CLI，用 `kubectl get workflow` 代替）。
+
 脚本行为可用环境变量调节（在 Workflow 的 `env` 中追加）：
 
 | 变量 | 默认 | 说明 |
@@ -142,6 +210,7 @@ lerobot_dataset_smoothed/
 
 | 现象 | 原因 | 处理 |
 |------|------|------|
+| 提交 Demo B 报 `cannot use generate name with apply` | 用了 `kubectl apply`，但 Workflow 是 `generateName` | 改用 `kubectl create -f ...`（Demo A 用 apply 没问题，只有 Demo B 必须 create）|
 | RayJob 一直 Pending，submitter Pod `ImagePullBackOff` | KubeRay 自动创建的 submitter Pod 不继承 head/worker 的 `imagePullSecrets` | 内置清单已通过 `submitterPodTemplate` 显式指定 |
 | Workflow 显示 Succeeded 但 MegaSaM 输出为空 | `:latest` + `IfNotPresent`，部分节点残留旧镜像 | 用固定 tag；首次部署新镜像时临时改 `Always` |
 | Argo DAG 一直 Running，GPU 阶段实际已成功 | KubeRay validation bug：设了 `ttlSecondsAfterFinished` 时 `jobDeploymentStatus` 卡在 `ValidationFailed` | 内置清单已移除该字段，只保留 `shutdownAfterJobFinishes: true` |
