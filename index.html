@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <meta name="description" content="计算巢是阿里云开放给企业应用服务商的服务管理平台。服务商能够在计算巢上发布私有化部署服务，为其客户提供云上软件一键部署的能力；同时也支持全托管模式的服务，赋能服务商托管其客户资源。">
+  <title>机器人（VLA）数据处理解决方案 · 使用文档 - Aliyun 计算巢 x 机器人数据处理方案</title>
+
+  <link rel="shortcut icon" href="img/favicon.ico">
+
+  <link rel="stylesheet" href="https://unpkg.com/purecss@1.0.0/build/pure-min.css">
+  <link rel="stylesheet" href="css/theme.css">
+  
+
+  
+
+  
+  
+
+  
+    <script src="search/main.js"></script>
+  
+
+  
+
+  <script src="js/highlight.min.js"></script>
+  <script>hljs.highlightAll();</script>
+</head>
+
+<body>
+  <div class="container">
+    <div class="nav">
+      <div class="nav-inner">
+        <div class="logo">
+          <img src="./img/logo-2x.png">
+        </div>
+        <div class="nav-list">
+          <ul>
+          
+              <li><a href="#vla">机器人（VLA）数据处理解决方案 · 使用文档</a></li>
+              
+                  <li><a href="#_1">一、服务部署了什么</a></li>
+                  
+                      <li class="li-h3"><a href="#11">1.1 集群与组件清单</a></li>
+                  
+                      <li class="li-h3"><a href="#12">1.2 两个节点池</a></li>
+                  
+                      <li class="li-h3"><a href="#13">1.3 创建的云资源与集群内对象</a></li>
+                  
+                      <li class="li-h3"><a href="#14-outputs">1.4 部署输出（Outputs）</a></li>
+                  
+              
+                  <li><a href="#erdma">二、eRDMA 校验方式</a></li>
+                  
+              
+                  <li><a href="#data-juicer-vla">三、data-juicer 示例（VLA 流水线）</a></li>
+                  
+                      <li class="li-h3"><a href="#30-demo">3.0 Demo 概览</a></li>
+                  
+                      <li class="li-h3"><a href="#31-1">3.1 第 1 步：备料</a></li>
+                  
+                      <li class="li-h3"><a href="#32-2">3.2 第 2 步：提交两阶段流水线</a></li>
+                  
+                      <li class="li-h3"><a href="#33">3.3 小结</a></li>
+                  
+              
+          
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="content theme-github">
+      
+      <div class="content-inner">        
+        
+        <h1 id="vla">机器人（VLA）数据处理解决方案 · 使用文档</h1>
+<blockquote>
+<p>本服务基于阿里云 ROS 模板一键交付一套「具身智能数据加工」环境：ACK 托管 Pro 集群 + L20N eRDMA GPU 节点池 + OSS/NAS 存储 + Argo Workflows + KubeRay + Fluid，并内置 data-juicer VLA 流水线 Demo（第一人称手部视频 → LeRobot v2.0 训练数据集）。</p>
+</blockquote>
+<hr />
+<h2 id="_1">一、服务部署了什么</h2>
+<h3 id="11">1.1 集群与组件清单</h3>
+<table>
+<thead>
+<tr>
+<th>类别</th>
+<th>组件</th>
+<th>版本 / 说明</th>
+<th>安装方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>集群</td>
+<td>ACK 托管 Pro</td>
+<td><code>ack.pro.small</code>，Terway-ENIIP，ProxyMode <code>ipvs</code>，公网 API 入口开启</td>
+<td><code>ALIYUN::CS::ManagedKubernetesCluster</code></td>
+</tr>
+<tr>
+<td>Ray</td>
+<td>kuberay-operator</td>
+<td>ACK 托管组件（<strong>operator 跑在管控面，集群内看不到 Deployment</strong>，就绪信号看 <code>rayjobs.ray.io</code> CRD）</td>
+<td><code>ALIYUN::CS::ClusterAddons</code></td>
+</tr>
+<tr>
+<td>eRDMA</td>
+<td>ack-erdma-controller</td>
+<td>Config：<code>preferDriver=ofed</code>、<code>allocateAllDevices=true</code></td>
+<td><code>ALIYUN::CS::ClusterAddons</code></td>
+</tr>
+<tr>
+<td>工作流</td>
+<td>ack-workflow（Argo Workflows）</td>
+<td><strong>3.5.15</strong>，镜像走 ACK 地域 VPC 仓库</td>
+<td><code>ALIYUN::CS::ClusterAddons</code></td>
+</tr>
+<tr>
+<td>数据加速</td>
+<td>ack-fluid</td>
+<td>通过 <code>MODULE::ACS::ComputeNest::FluxOciHelmDeploy</code> 安装到 <code>fluid-system</code>，values 传 <code>region</code> + <code>pullImageByVPCNetwork=true</code>（必须用 ACK 版 chart，社区版含 Helm <code>lookup</code> 会解析失败）</td>
+<td>Helm(OCI)</td>
+</tr>
+<tr>
+<td>GPU 驱动</td>
+<td>NVIDIA <strong>580.126.09</strong></td>
+<td>由节点标签 <code>ack.aliyun.com/nvidia-driver-version</code> 固定（L20N + eRDMA 官方要求）</td>
+<td>节点池标签</td>
+</tr>
+<tr>
+<td>eRDMA 驱动</td>
+<td>erdma_installer <strong>1.5.9</strong></td>
+<td>节点 UserData 从 <code>mirrors.cloud.aliyuncs.com/erdma</code> 升级；≥1.5.9 默认启用 MPCC 拥塞算法</td>
+<td>节点 UserData</td>
+</tr>
+</tbody>
+</table>
+<h3 id="12">1.2 两个节点池</h3>
+<table>
+<thead>
+<tr>
+<th>节点池</th>
+<th>名称</th>
+<th>规格</th>
+<th>盘</th>
+<th>标签 / 污点</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>管控</td>
+<td><code>sys-pool</code></td>
+<td><code>ecs.u1-c1m4.xlarge</code>（默认，4C16G，可选 4 种 u1）×≥2，跨主/次可用区打散</td>
+<td>系统盘 200G ESSD</td>
+<td><code>robot-solution.aliyun.com/node-role=system</code></td>
+<td>承载 Argo / KubeRay / Fluid / CSI，<strong>不跑 GPU 负载</strong></td>
+</tr>
+<tr>
+<td>GPU</td>
+<td><code>gpu-pool</code></td>
+<td><code>ecs.ebmgn9g.64xlarge</code>（默认，256C/2304G/<strong>8×L20N 48G</strong>），另可选 <code>ebmgn9gc.64xlarge</code>、<code>ebmgn9ge.64xlarge</code>；数量 0~16，默认 1，<strong>全部落主可用区</strong></td>
+<td>系统盘 500G ESSD</td>
+<td>标签 <code>robot-solution.aliyun.com/node-role=gpu</code>；污点 <code>nvidia.com/gpu=true:NoSchedule</code></td>
+<td>eRDMA + GPU 算力，Demo 与流水线跑在这里</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>⚠️ <strong>L20N 裸金属当前全地域售罄、弹性配额默认为 0</strong>，部署前必须先申请 L20N 配额/白名单，否则栈会以 <code>InstanceTypeNoStock</code> 或 <code>QuotaExceed</code> 失败。</p>
+</blockquote>
+<h3 id="13">1.3 创建的云资源与集群内对象</h3>
+<p><strong>云资源（VPC/存储/RAM）</strong></p>
+<table>
+<thead>
+<tr>
+<th>资源</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>VPC + 2 台交换机</td>
+<td>选「新建专有网络」时由 <code>MODULE::ACS::ComputeNest::VpcAndVSwitch</code> 创建（默认 VPC <code>192.168.0.0/16</code>，主/次交换机 <code>192.168.0.0/20</code>、<code>192.168.16.0/20</code>）；选「已有」则复用你填的 ID。交换机同时承载节点与 Terway Pod IP，<strong>建议 /20 及以上</strong></td>
+</tr>
+<tr>
+<td>OSS Bucket</td>
+<td><strong>作用：输入层</strong>——<code>dataset/</code> 存源视频、<code>models/</code> 存模型权重，分别以 <code>robot-dataset</code>、<code>robot-models</code> 两个 PVC 挂进运维控制台与流水线 Pod 的 <code>/data/dataset</code>、<code>/data/models</code>（ossfs，适合大文件顺序读；备料时也靠它写入 3.1GB 级的权重）。<br>选「新建Bucket」时自动创建 <code>robot-data-&lt;StackId 前 8 位&gt;</code>（private / LRS / Standard，<code>DeletionForce: true</code>）；并预建 <code>dataset/</code> 与 <code>models/</code> 两个前缀（ossfs 挂子目录时目录不存在会挂载失败）</td>
+</tr>
+<tr>
+<td>RAM 用户 + AccessKey</td>
+<td><strong>作用</strong>：供 CSI 挂载 OSS 与备料脚本访问 Bucket，以 Secret <code>oss-secret</code> 形式存在 <code>robot-demo</code> 命名空间。选「自动创建 AccessKey」时创建，权限<strong>仅限该 Bucket</strong> 的 <code>oss:*</code>；也可改为自备 AK（模板会展示所需策略 JSON）</td>
+</tr>
+<tr>
+<td>NAS 文件系统 + 挂载点</td>
+<td><strong>作用：输出层</strong>——以 <code>robot-output</code> PVC 挂到 <code>/data/output</code>，存流水线中间结果（<code>frames/</code>、<code>moge_arrays/</code>、<code>megasam_arrays/</code>、<code>*.json</code>、<code>lerobot_dataset/</code>）与最终数据集 <code>lerobot_dataset_smoothed/</code>。<strong>这里必须用 NAS 而不是 OSS</strong>：这一段是频繁写小文件，ossfs 的写性能与 POSIX 语义不足；同时需 RWX 供 Ray head/worker/后处理 Pod 跨节点共挂。<br>通用型 NFS、按量付费，<code>Performance</code>/<code>Capacity</code> 二选一；挂载点落 VPC 主交换机（<strong>不指定 ZoneId</strong>，由 NAS 自选支持的可用区，避免 <code>InvaildZone.NotExist</code>）。单价约为 OSS 的 3 倍，产物建议归档回 OSS 后清理</td>
+</tr>
+</tbody>
+</table>
+<h3 id="14-outputs">1.4 部署输出（Outputs）</h3>
+<table>
+<thead>
+<tr>
+<th>输出项</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ClusterId</code> / <code>ClusterConsoleUrl</code></td>
+<td>ACK 集群 ID 与控制台地址</td>
+</tr>
+<tr>
+<td><code>OssBucketName</code></td>
+<td>本实例使用的 Bucket</td>
+</tr>
+<tr>
+<td><code>Step1PrepareMaterials</code></td>
+<td>备料命令（见 3.1）</td>
+</tr>
+<tr>
+<td><code>OssBucketForYourOwnData</code></td>
+<td>上传自有视频的 <code>aliyun oss cp</code> 命令</td>
+</tr>
+<tr>
+<td><code>Step2SubmitDemoB</code></td>
+<td>VLA 流水线的提交命令（见 3.2）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="erdma">二、eRDMA 校验方式</h2>
+<p>登录 GPU 节点池下的任一 GPU 节点，拉取并执行官方体检脚本：</p>
+<pre><code class="language-bash">wget http://mirrors.cloud.aliyuncs.com/erdma/tools/env_check.py
+python3 env_check.py -s egs_l20n
+</code></pre>
+<p>校验项全部为 <strong>PASS</strong> 即说明 eRDMA 已安装并配置正常。</p>
+<p><img alt="eRDMA 体检结果全部 PASS" src="image.png" /></p>
+<h2 id="data-juicer-vla">三、data-juicer 示例（VLA 流水线）</h2>
+<h3 id="30-demo">3.0 Demo 概览</h3>
+<p>命名空间 <code>robot-demo</code> 下有一个名为 <code>vla-ops</code> 的 Deployment（运维控制台），本示例的备料与提交操作都在它里完成。</p>
+<h3 id="31-1">3.1 第 1 步：备料</h3>
+<p>物料均来自计算巢公开制品库，<strong>无需自备</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>包</th>
+<th>大小</th>
+<th>解压根目录</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hawor.tar.gz</code></td>
+<td>3.1 GB</td>
+<td><code>/data/models</code></td>
+<td>HaWoR 权重 / 配置 / 检测器</td>
+</tr>
+<tr>
+<td><code>mano.tar.gz</code></td>
+<td>165 MB</td>
+<td><code>/data/models</code></td>
+<td>MANO 左右手模型</td>
+</tr>
+<tr>
+<td><code>dataset.tar.gz</code></td>
+<td>12 MB</td>
+<td><code>/data/dataset</code></td>
+<td>两段测试视频</td>
+</tr>
+</tbody>
+</table>
+<p>在 <code>vla-ops</code> 容器内执行下面的命令完成上述物料的下载与校验：</p>
+<pre><code class="language-bash">bash /materials/prepare-data.sh
+</code></pre>
+<p><img alt="备料脚本执行完成，物料全部就位" src="image-1.png" /></p>
+<h3 id="32-2">3.2 第 2 步：提交两阶段流水线</h3>
+<p>同样在 <code>vla-ops</code> 容器内提交流水线：</p>
+<pre><code class="language-bash">kubectl create -f /demo-manifests/02-vla-argo-workflow.yaml
+</code></pre>
+<p>提交后可以看到 RayJob 以及 Ray head / Ray worker 已被创建出来，等待其进入运行状态即可。</p>
+<p><img alt="RayJob 与 Ray head/worker Pod 已创建" src="image-2.png" /></p>
+<p>流水线日志从 submitter Pod（形如 <code>vla-pipeline-mhk8b-rayjob-j6jgp</code>）中查看：</p>
+<pre><code class="language-bash">kubectl -n robot-demo logs -f &lt;workflow-name&gt;-rayjob-xxxxx
+</code></pre>
+<p><img alt="从 submitter Pod 查看流水线日志" src="image-3.png" /></p>
+<p>待所有 Pod 均变为 <code>Completed</code> 状态后，回到 <code>vla-ops</code> 容器内即可查看产出结果：</p>
+<p><img alt="在 vla-ops 容器内查看流水线产物" src="image-4.png" /></p>
+<h3 id="33">3.3 小结</h3>
+<p><code>vla-ops</code> 容器内挂载的关键目录如下：</p>
+<table>
+<thead>
+<tr>
+<th>路径</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/data/models</code></td>
+<td>模型权重（HaWoR、MANO）</td>
+</tr>
+<tr>
+<td><code>/data/dataset</code></td>
+<td>输入视频</td>
+</tr>
+<tr>
+<td><code>/data/output</code></td>
+<td>流水线产物</td>
+</tr>
+<tr>
+<td><code>/demo-manifests/02-vla-argo-workflow.yaml</code></td>
+<td>提交用的流水线 YAML</td>
+</tr>
+<tr>
+<td><code>/scripts</code></td>
+<td>流水线调用的 Python 脚本</td>
+</tr>
+</tbody>
+</table>
+<p>想换成自己的视频，只需替换 <code>/data/dataset</code> 下的视频文件；想调整处理逻辑，修改流水线 YAML 与 <code>/scripts</code> 下的 Python 脚本即可。</p>
+        
+      </div>
+
+      <div class="copyrights">© 2009-2022 Aliyun.com 版权所有</div>
+    </div>
+  </div>
+  
+  <!--
+  MkDocs version      : 1.6.1
+  Docs Build Date UTC : 2026-08-17 01:46:55.765380+00:00
+  -->
+</body>
+</html>

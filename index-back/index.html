@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <meta name="description" content="计算巢是阿里云开放给企业应用服务商的服务管理平台。服务商能够在计算巢上发布私有化部署服务，为其客户提供云上软件一键部署的能力；同时也支持全托管模式的服务，赋能服务商托管其客户资源。">
+  <title>具身智能运行基础环境部署文档 - Aliyun 计算巢 x 机器人数据处理方案</title>
+
+  <link rel="shortcut icon" href="../img/favicon.ico">
+
+  <link rel="stylesheet" href="https://unpkg.com/purecss@1.0.0/build/pure-min.css">
+  <link rel="stylesheet" href="../css/theme.css">
+  
+
+  
+
+  
+  
+
+  
+    <script src="../search/main.js"></script>
+  
+
+  
+
+  <script src="../js/highlight.min.js"></script>
+  <script>hljs.highlightAll();</script>
+</head>
+
+<body>
+  <div class="container">
+    <div class="nav">
+      <div class="nav-inner">
+        <div class="logo">
+          <img src="./img/logo-2x.png">
+        </div>
+        <div class="nav-list">
+          <ul>
+          
+              <li><a href="#_1">具身智能运行基础环境部署文档</a></li>
+              
+                  <li><a href="#_2">一、方案架构</a></li>
+                  
+              
+                  <li><a href="#3">二、部署后操作（3 步）</a></li>
+                  
+                      <li class="li-h3"><a href="#1">第 1 步：在运维控制台备料（一条命令）</a></li>
+                  
+                      <li class="li-h3"><a href="#2-erdma-gpu">第 2 步：看 eRDMA 体检与 GPU 资源</a></li>
+                  
+                      <li class="li-h3"><a href="#3-vla-ops">第 3 步：进 vla-ops 一站式跑数据流（推荐）</a></li>
+                  
+              
+                  <li><a href="#_3">三、数据流水线细节</a></li>
+                  
+                      <li class="li-h3"><a href="#demo">两个 Demo 分别做什么</a></li>
+                  
+                      <li class="li-h3"><a href="#_4">流水线阶段</a></li>
+                  
+                      <li class="li-h3"><a href="#_5">从集群外提交（备选）</a></li>
+                  
+              
+                  <li><a href="#_6">四、排查清单（运行阶段）</a></li>
+                  
+              
+          
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="content theme-github">
+      
+      <div class="content-inner">        
+        
+        <h1 id="_1">具身智能运行基础环境部署文档</h1>
+<blockquote>
+<p>本方案将 <strong>VLA 数据生产</strong> 与 <strong>eRDMA 训练就绪</strong> 合并到一套 GPU 集群：一键交付 ACK 托管 Pro 集群 + L20N GPU 节点池 + OSS/NAS 分层存储，开箱即可跑两阶段 VLA 数据流水线，同时集群已完成 eRDMA 高性能网络就绪（升驱动 / 关 PCIe ACS / Terway 网卡白名单 / 逐节点体检）。</p>
+</blockquote>
+<p>本方案内置两个可直接提交的 Demo 与一份 eRDMA 体检：</p>
+<ul>
+<li><strong>Demo A</strong>：GPU 环境自检（驱动、CUDA、Data-Juicer 算子、存储卷挂载）</li>
+<li><strong>Demo B</strong>：两阶段 VLA 数据流水线（第一人称视频 → LeRobot v2.0 数据集），由 Argo Workflows 编排、KubeRay 承载 GPU 阶段</li>
+<li><strong>eRDMA 体检</strong>：部署完即可用一条 <code>kubectl logs</code> 看每台节点的 10 项 PASS/FAIL 汇总</li>
+</ul>
+<h2 id="_2">一、方案架构</h2>
+<pre><code>ACK 托管 Pro 集群（Terway-ENIIP）
+├─ 节点池 sys-pool（主+次可用区打散）：N × 4c16g
+│    ├ ACK eRDMA Controller（ofed + allocateAllDevices）
+│    ├ Terway 网卡白名单 Job（eni_tag_filter=creator:terway，幂等）
+│    └ Argo Workflows（ACK ack-workflow addon）/ Fluid / KubeRay / CSI
+│
+└─ 节点池 gpu-pool（固定主可用区）：M × L20N 裸金属（默认 ecs.ebmgn9g.64xlarge）
+     ├ 云市场 eRDMA 镜像（cmjj00066236）
+     ├ UserData 三步：升 eRDMA 驱动至 1.5.9 → 关闭 PCIe ACS → 落地体检脚本
+     ├ 节点标签 robot-solution.aliyun.com/node-role=gpu（VLA Demo 靠它调度）
+     ├ 固定驱动 ack.aliyun.com/nvidia-driver-version=580.126.09
+     ├ 污点 nvidia.com/gpu=true:NoSchedule（隔离算力）
+     └ eRDMA 体检 DaemonSet（逐节点 PASS/FAIL，readinessProbe 门禁）
+
+存储（全部由服务自动创建，无需您提前准备）：
+  OSS Bucket（服务创建）  dataset/ → PVC robot-dataset（RWX）    源视频
+                          models/  → PVC robot-models（RWX）     HaWoR / MANO 权重
+  NAS（服务创建）                  → PVC robot-output（RWX）      中间结果与最终数据集
+  vla-ops 运维控制台                三个卷全挂载 + /materials 物料脚本
+  Fluid                             缓存 OSS 上的模型目录，削减模型冷加载耗时
+</code></pre>
+<blockquote>
+<p><strong>eRDMA 生效依赖编排顺序</strong>：先建 CPU 管控节点池 → 装 eRDMA Controller 与 Terway 白名单 → 再拉起 GPU 池。若先建 GPU 池后装组件，需把节点移出再重新加入才能生效。本模板已用 <code>DependsOn</code> 锁死这个顺序。</p>
+</blockquote>
+<p>数据流：<code>OSS(视频+模型) → GPU 阶段(RayJob) → NAS(*.json + LeRobot 原始集) → CPU 阶段 → NAS(最终平滑数据集)</code></p>
+<h2 id="3">二、部署后操作（3 步）</h2>
+<p>资源栈的<strong>输出</strong>里已给出每一步可直接复制的命令。先获取 kubeconfig：</p>
+<pre><code class="language-bash">aliyun cs GET /k8s/&lt;ClusterId&gt;/user_config | jq -r .config &gt; ~/.kube/config-robot
+export KUBECONFIG=~/.kube/config-robot
+</code></pre>
+<h3 id="1">第 1 步：在运维控制台备料（一条命令）</h3>
+<p>服务已在 <code>robot-demo</code> 命名空间部署了一个常驻的 <strong>vla-ops 运维控制台</strong>，三个卷都已挂好。模型权重与样例视频都在计算巢公开制品库里，<strong>无需您自备任何数据</strong>：</p>
+<pre><code class="language-bash">kubectl exec -it deploy/vla-ops -n robot-demo -- bash /materials/prepare-data.sh
+</code></pre>
+<p>脚本会拉取并校验三份物料（HaWoR 3.1 GB、MANO 165 MB、样例视频 12 MB），已存在的会自动跳过，可反复重跑。常用参数：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--check-only</code></td>
+<td>只校验不下载</td>
+</tr>
+<tr>
+<td><code>--region &lt;r&gt;</code></td>
+<td>指定制品库地域（默认从 ECS 元数据自动探测）</td>
+</tr>
+<tr>
+<td><code>--public</code></td>
+<td>内网端点不通时改走公网</td>
+</tr>
+</tbody>
+</table>
+<p>想用自己的视频替掉样例数据时，Bucket 名见输出 <code>OssBucketName</code>（形如 <code>robot-data-xxxxxxxx</code>）：</p>
+<pre><code class="language-bash">aliyun oss cp -r ./videos/ oss://&lt;Bucket&gt;/dataset/ --endpoint oss-&lt;region&gt;.aliyuncs.com
+</code></pre>
+<h3 id="2-erdma-gpu">第 2 步：看 eRDMA 体检与 GPU 资源</h3>
+<p>服务在每台 GPU 节点上跑了体检 DaemonSet。<strong>实例 Deployed 时报告一定已完整</strong>（readinessProbe 盯 sentinel 文件，不会看到半成品）：</p>
+<pre><code class="language-bash">kubectl logs -n erdma-check -l app=erdma-env-check --tail=-1 --prefix
+kubectl get nodes -l robot-solution.aliyun.com/node-role=gpu -o jsonpath='{range .items[*]}{.metadata.name}{&quot;\t&quot;}{.status.allocatable}{&quot;\n&quot;}{end}'
+</code></pre>
+<p>体检报告 A 段是 10 项 PASS/FAIL 判定 + 一行 <code>SUMMARY PASS=.. FAIL=.. SKIP=..</code>（B 段官方 <code>env_check.py</code>、C 段原始信息供排查）。L20N 上应 <strong>10 项全 PASS</strong>，且节点同时上报 <code>"nvidia.com/gpu":"8"</code> 与 <code>"aliyun/erdma":"400"</code>。</p>
+<ul>
+<li>体检项 <strong>2～5</strong>（两张网卡 / PORT_ACTIVE / MTU 4096 / NUMA）依赖 L20N 出厂自带的两张 eRDMA 网卡，在 L20N 上应全部 PASS。</li>
+<li>节点命令<strong>无输出</strong> = GPU 数为 0（无配额时的正常态），配额到位后节点池改回 1 即可。</li>
+<li>没有 <code>aliyun/erdma</code> = eRDMA 组件未生效；节点有但无 <code>nvidia.com/gpu</code> = 驱动还在装，等几分钟。</li>
+</ul>
+<h3 id="3-vla-ops">第 3 步：进 vla-ops 一站式跑数据流（推荐）</h3>
+<p><strong>vla-ops 里已内置 <code>kubectl</code> / <code>ossutil</code> / <code>jq</code>，并挂好了脚本、Demo 清单和三个数据卷</strong>——不用在本地装任何工具，进去就能把数据流从头跑到尾：</p>
+<pre><code class="language-bash">kubectl exec -it deploy/vla-ops -n robot-demo -- bash
+</code></pre>
+<p>进去后看得到这些：</p>
+<table>
+<thead>
+<tr>
+<th>路径</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/demo-manifests/</code></td>
+<td><code>01-gpu-check.yaml</code>、<code>02-vla-argo-workflow.yaml</code>（Demo 清单）</td>
+</tr>
+<tr>
+<td><code>/scripts/</code></td>
+<td><code>vla_gpu_pipeline.py</code>、<code>vla_cpu_postprocess.py</code>（流水线代码）</td>
+</tr>
+<tr>
+<td><code>/data/dataset</code> <code>/data/models</code> <code>/data/output</code></td>
+<td>源视频 / 模型权重 / 产出</td>
+</tr>
+<tr>
+<td><code>/materials/prepare-data.sh</code></td>
+<td>备料脚本</td>
+</tr>
+</tbody>
+</table>
+<p><strong>完整跑一次数据流（在 pod 内依次执行）：</strong></p>
+<pre><code class="language-bash"># 1) 备料（首次必做，已备过会自动跳过）
+bash /materials/prepare-data.sh
+
+# 2) 先过 GPU 自检（验证卡、CUDA、算子、卷挂载）
+kubectl apply -f /demo-manifests/01-gpu-check.yaml
+kubectl logs -f gpu-check
+
+# 3) 提交两阶段数据流水线
+kubectl create -f /demo-manifests/02-vla-argo-workflow.yaml
+</code></pre>
+<blockquote>
+<p>⚠️ <strong>Demo B 必须用 <code>kubectl create</code>，不能用 <code>apply</code></strong>。Workflow 用的是 <code>generateName</code>（每次提交自动取唯一名字），用 apply 会直接报：
+<code>error: from vla-pipeline-: cannot use generate name with apply</code>
+（Demo A 是固定名字的 Pod，apply / create 都行。）</p>
+</blockquote>
+<p><strong>看运行进展</strong>（pod 内无 argo CLI，用 kubectl 就够）：</p>
+<pre><code class="language-bash">kubectl get workflow -n robot-demo                 # STATUS: Running → Succeeded
+kubectl get pod -n robot-demo | grep vla-pipeline   # 各阶段 pod
+</code></pre>
+<p>阶段预期：<code>gpu-pipeline-rayjob</code>（GPU 阶段，RayJob）先 Running → Completed，紧接着 <code>cpu-postprocess-pod</code> Running → Completed，最后 Workflow 变 <strong>Succeeded</strong>。</p>
+<blockquote>
+<p>首次提交比较慢（约 20～25 分钟），<strong>主要时间花在拉 11.6 GB 流水线镜像</strong>（head / worker / submitter 各自拉一次，每次约 10 分钟）；GPU 计算本身在 L20N 上只约 90 秒。镜像缓存后再跑约 4～5 分钟。看到 pod 卡在 <code>ContainerCreating</code> 属正常。</p>
+</blockquote>
+<p><strong>确认数据流真的跑通了</strong>（看产出，而不只看状态）：</p>
+<pre><code class="language-bash"># GPU 阶段产出：LeRobot 原始集
+ls /data/output/vla-gpu-pipeline/lerobot_dataset/          # data  meta  videos
+
+# CPU 阶段产出：平滑后的最终数据集
+ls /data/output/vla-cpu-postprocess/lerobot_dataset_smoothed/
+ls -lh /data/output/vla-cpu-postprocess/lerobot_dataset_smoothed/data/chunk-000/   # episode_*.parquet
+
+# 数据集元信息
+cat /data/output/vla-cpu-postprocess/lerobot_dataset_smoothed/meta/info.json | jq -c '{robot_type,total_episodes,total_frames,fps}'
+</code></pre>
+<p>输出示例（跑完 4 段视频）：</p>
+<pre><code>{&quot;robot_type&quot;:&quot;egodex_hand&quot;,&quot;total_episodes&quot;:4,&quot;total_frames&quot;:43,&quot;fps&quot;:10}
+episode_000001.parquet   6.9K
+episode_000002.parquet   7.4K
+</code></pre>
+<p>能看到 <code>lerobot_dataset_smoothed/</code> 下有 <code>episode_*.parquet</code> + <code>meta/info.json</code> + <code>videos/</code>，就说明<strong>整条数据流（视频 → MoGe-2 标定 → HaWoR+MegaSaM → 手部动作 → LeRobot 导出 → 轨迹平滑）已跑通</strong>。</p>
+<p>想改流水线行为：<code>/scripts/</code> 里的代码是只读挂载，要真改用 <code>kubectl -n robot-demo edit cm vla-pipeline-script</code>（改完下次提交生效）；调参数则在 Workflow 的 <code>env</code> 里加（见下节环境变量表）。</p>
+<h2 id="_3">三、数据流水线细节</h2>
+<h3 id="demo">两个 Demo 分别做什么</h3>
+<ul>
+<li><strong>Demo A（<code>01-gpu-check.yaml</code>）</strong>：单 Pod 自检，依次输出 <code>nvidia-smi</code>、torch CUDA 可用性与卡数、Data-Juicer 算子导入结果、挂载目录内容。<strong>它同时验证 OSS 卷能不能真的挂载</strong>，建议先过这关再跑 Demo B。</li>
+<li><strong>Demo B（<code>02-vla-argo-workflow.yaml</code>）</strong>：Argo DAG 编排的两阶段数据流水线。</li>
+</ul>
+<h3 id="_4">流水线阶段</h3>
+<pre><code>Step 1（GPU，RayJob，任务结束自动销毁 RayCluster）
+  帧提取(CPU) → MoGe-2 相机标定(GPU) → HaWoR+MegaSaM(GPU) → 手部动作计算(CPU) → LeRobot 导出(CPU)
+Step 2（CPU，普通 Pod）
+  Savitzky-Golay 轨迹平滑 → 原子动作分割 → LeRobot 最终导出
+</code></pre>
+<p>最终数据集结构（LeRobot v2.0）：</p>
+<pre><code>lerobot_dataset_smoothed/
+  data/chunk-000/episode_000000.parquet      # state(8维) / action(7维) / gripper
+  videos/chunk-000/observation.images.image/episode_000000.mp4
+  meta/{info.json, episodes.jsonl, tasks.jsonl, modality.json}
+</code></pre>
+<h3 id="_5">从集群外提交（备选）</h3>
+<p>如果不想进 pod、本地已有 kubectl，也可以直接从 ConfigMap 取清单提交（注意 Demo B 同样必须 <code>create</code>）：</p>
+<pre><code class="language-bash">kubectl -n robot-demo get cm demo-manifests -o jsonpath='{.data.01-gpu-check\.yaml}' | kubectl apply -f -
+kubectl -n robot-demo get cm demo-manifests -o jsonpath='{.data.02-vla-argo-workflow\.yaml}' | kubectl create -f -
+</code></pre>
+<p>本地装了 argo CLI 的话可用 <code>argo -n robot-demo watch @latest</code> 看实时 DAG（vla-ops 内没有 argo CLI，用 <code>kubectl get workflow</code> 代替）。</p>
+<p>脚本行为可用环境变量调节（在 Workflow 的 <code>env</code> 中追加）：</p>
+<table>
+<thead>
+<tr>
+<th>变量</th>
+<th>默认</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>VLA_MAX_VIDEOS</code></td>
+<td>0（不限）</td>
+<td>首次验证建议设 2，快速跑通</td>
+</tr>
+<tr>
+<td><code>VLA_FRAME_NUM</code></td>
+<td>20</td>
+<td>每视频抽帧数，<strong>必须 ≥ 8</strong>，否则 MegaSaM 无法完成 Bundle Adjustment</td>
+</tr>
+<tr>
+<td><code>VLA_GPU_ACTORS</code></td>
+<td>集群 GPU 卡数</td>
+<td>GPU Actor 并行度</td>
+</tr>
+<tr>
+<td><code>VLA_SLIM_OUTPUT</code></td>
+<td>0</td>
+<td>置 1 时落盘前裁掉 depth 等大字段，规模化时可把落盘量降低一个数量级</td>
+</tr>
+</tbody>
+</table>
+<h2 id="_6">四、排查清单（运行阶段）</h2>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>原因</th>
+<th>处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>提交 Demo B 报 <code>cannot use generate name with apply</code></td>
+<td>用了 <code>kubectl apply</code>，但 Workflow 是 <code>generateName</code></td>
+<td>改用 <code>kubectl create -f ...</code>（Demo A 用 apply 没问题，只有 Demo B 必须 create）</td>
+</tr>
+<tr>
+<td>RayJob 一直 Pending，submitter Pod <code>ImagePullBackOff</code></td>
+<td>KubeRay 自动创建的 submitter Pod 不继承 head/worker 的 <code>imagePullSecrets</code></td>
+<td>内置清单已通过 <code>submitterPodTemplate</code> 显式指定</td>
+</tr>
+<tr>
+<td>Workflow 显示 Succeeded 但 MegaSaM 输出为空</td>
+<td><code>:latest</code> + <code>IfNotPresent</code>，部分节点残留旧镜像</td>
+<td>用固定 tag；首次部署新镜像时临时改 <code>Always</code></td>
+</tr>
+<tr>
+<td>Argo DAG 一直 Running，GPU 阶段实际已成功</td>
+<td>KubeRay validation bug：设了 <code>ttlSecondsAfterFinished</code> 时 <code>jobDeploymentStatus</code> 卡在 <code>ValidationFailed</code></td>
+<td>内置清单已移除该字段，只保留 <code>shutdownAfterJobFinishes: true</code></td>
+</tr>
+<tr>
+<td>GPU 阶段报 <code>Forbidden: pods is forbidden</code></td>
+<td>Argo 的 wait sidecar 需要 pods 的 get/patch</td>
+<td>部署已下发对应 Role/RoleBinding</td>
+</tr>
+<tr>
+<td>MegaSaM 报 <code>no kernel image is available</code></td>
+<td>镜像内 CUDA 扩展的算力架构不匹配</td>
+<td>重编 <code>droid_backends</code>/<code>lietorch_backends</code>，<code>TORCH_CUDA_ARCH_LIST</code> 含目标架构（L20 为 8.9）</td>
+</tr>
+<tr>
+<td>MegaSaM 运行但 <code>cam_c2w</code> 为空</td>
+<td>DROID-SLAM 至少需要 8 帧</td>
+<td><code>VLA_FRAME_NUM</code> ≥ 8，推荐 20</td>
+</tr>
+<tr>
+<td>HaWoR 阶段超时或 <code>ConnectionError</code></td>
+<td>模型权重未备齐</td>
+<td>按<a href="#第-1-步在运维控制台备料一条命令">第 1 步</a>在运维控制台跑一次 <code>prepare-data.sh</code></td>
+</tr>
+<tr>
+<td>MoGe-2 相机标定阶段报 <code>LocalEntryNotFoundError</code> / HuggingFace 下载失败</td>
+<td>MoGe-2 权重在<strong>运行时从 HF（hf-mirror.com）在线拉取</strong>，未预置；HF 偶发不可达时该阶段会失败</td>
+<td>重试 Workflow 即可；HF 长期不通时在有网环境预拉 MoGe-2 权重放入 models/ 卷</td>
+</tr>
+<tr>
+<td>Pod 卡 ContainerCreating，事件报 OSS 挂载失败</td>
+<td>AccessKey 无权限，或 Bucket 前缀不存在</td>
+<td>检查 <code>oss-secret</code> 与 RAM 权限；<code>dataset/</code>、<code>models/</code> 前缀由服务预建，勿删</td>
+</tr>
+<tr>
+<td>GPU Pod 一直 Pending</td>
+<td>GPU 节点被污点隔离，负载缺 toleration</td>
+<td>内置清单已带 <code>nvidia.com/gpu</code> toleration；自定义负载需补上</td>
+</tr>
+</tbody>
+</table>
+        
+      </div>
+
+      <div class="copyrights">© 2009-2022 Aliyun.com 版权所有</div>
+    </div>
+  </div>
+  
+  <!--
+  MkDocs version      : 1.6.1
+  Docs Build Date UTC : 2026-08-17 01:46:55.788942+00:00
+  -->
+</body>
+</html>
